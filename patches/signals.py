@@ -87,6 +87,12 @@ def connect_signals():
     # or deleted. Parallels evidence ingestion but with a fuller lifecycle.
     _connect_document_revision_signal(ff_is_enabled)
 
+    # Demo patch: clean Qdrant chunks whenever an IndexedDocument is removed,
+    # whether explicitly or via Folder/cascade. Without this, deleting a Folder
+    # leaves orphaned chunks because IndexedDocument is cascade-deleted before
+    # the DocumentRevision handler can run its cleanup.
+    _connect_indexed_document_delete_signal(ff_is_enabled)
+
 
 def _connect_evidence_signal(ff_is_enabled):
     """Connect signal to auto-ingest evidence file attachments."""
@@ -178,7 +184,11 @@ def _qdrant_delete_chunks_for_indexed_doc(indexed_document_id):
 
 
 def _cleanup_indexed_for_revision(revision_id, revision_content_type):
-    """Delete every IndexedDocument tied to a DocumentRevision id, plus chunks."""
+    """
+    Delete every IndexedDocument tied to a DocumentRevision id. The Qdrant
+    cleanup is handled by the IndexedDocument post_delete signal below, so
+    we just trigger the model delete.
+    """
     from .models import IndexedDocument
 
     qs = IndexedDocument.objects.filter(
@@ -186,7 +196,6 @@ def _cleanup_indexed_for_revision(revision_id, revision_content_type):
         source_object_id=revision_id,
     )
     for idx_doc in qs:
-        _qdrant_delete_chunks_for_indexed_doc(idx_doc.id)
         idx_doc.delete()
 
 
@@ -212,8 +221,7 @@ def _cleanup_indexed_for_other_revisions(document_id, current_revision_id, revis
         source_object_id__in=other_rev_ids,
     )
     for idx_doc in qs:
-        _qdrant_delete_chunks_for_indexed_doc(idx_doc.id)
-        idx_doc.delete()
+        idx_doc.delete()  # post_delete signal cleans Qdrant
 
 
 def _ingest_revision_content(revision_id, revision_model):
@@ -260,6 +268,22 @@ def _ingest_revision_content(revision_id, revision_model):
         indexed_document_id=str(indexed.id),
         filename=filename,
     )
+
+
+def _connect_indexed_document_delete_signal(ff_is_enabled):
+    """
+    Connect a post_delete handler on IndexedDocument that retires its Qdrant
+    chunks. Single source of truth for chunk cleanup — covers the explicit
+    revision deletion path AND the Folder cascade path (where IndexedDocument
+    is auto-deleted alongside the revision before the revision handler can run).
+    """
+    from .models import IndexedDocument
+
+    @receiver(post_delete, sender=IndexedDocument, weak=False)
+    def on_indexed_document_delete(sender, instance, **kwargs):
+        if not ff_is_enabled("chat_mode"):
+            return
+        _qdrant_delete_chunks_for_indexed_doc(instance.id)
 
 
 def _connect_document_revision_signal(ff_is_enabled):

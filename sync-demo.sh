@@ -87,6 +87,13 @@ fi
 step "bootstrapping demo folder and policies"
 docker compose exec -T backend poetry run python manage.py setup_demo 2>&1 | tail -12
 
+# --- Post-setup verification ---
+
+step "verifying patches and integrations"
+if ! docker compose exec -T backend poetry run python manage.py verify_demo; then
+  fail "verify_demo failed. The demo is NOT in a known-good state. Inspect the output above."
+fi
+
 # --- Done ---
 
 EMAIL=$(grep '^DJANGO_SUPERUSER_EMAIL=' .env | cut -d= -f2)

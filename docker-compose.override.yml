@@ -11,8 +11,10 @@ services:
       - ./patches/knowledge_graph.py:/code/chat/knowledge_graph.py:ro
       - ./patches/tools.py:/code/chat/tools.py:ro
       - ./patches/signals.py:/code/chat/signals.py:ro
+      - ./patches/extractors.py:/code/chat/extractors.py:ro
       # Demo bootstrap: management command + content source-of-truth markdown
       - ./demo-content/setup_demo.py:/code/chat/management/commands/setup_demo.py:ro
+      - ./patches/verify_demo.py:/code/chat/management/commands/verify_demo.py:ro
       - ./demo-content:/code/demo-content:ro
 
   huey:
@@ -23,6 +25,7 @@ services:
       - ./patches/knowledge_graph.py:/code/chat/knowledge_graph.py:ro
       - ./patches/tools.py:/code/chat/tools.py:ro
       - ./patches/signals.py:/code/chat/signals.py:ro
+      - ./patches/extractors.py:/code/chat/extractors.py:ro
       - ./demo-content/setup_demo.py:/code/chat/management/commands/setup_demo.py:ro
       - ./demo-content:/code/demo-content:ro
 
