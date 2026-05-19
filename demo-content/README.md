@@ -18,12 +18,25 @@ These are deliberate. The foil exists to show what the AI does when its groundin
 - **§6 precedent** — Refers to the AI Deployment Register, which is not included; says conditions "shall be carried forward unless materially differing circumstances are documented", without naming any precedent.
 - **§10 monitoring** — "Monitoring is a baseline requirement for production AI Systems" sits one sentence away from a deferral clause for Low tier.
 
-## Demo ingestion order
+## Bringing the demo up
 
-1. Create a ManagedDocument of type Policy with name "FINOS AI Readiness Governance Framework". Paste `finos-air-governance-subset.md` into the latest DocumentRevision. Set status to Published.
-2. Create a ManagedDocument of type Policy with name "AI Governance Policy". Paste `lorem-ipsum-wealth-partners-ai-governance-policy-v1-prose.md` into the latest DocumentRevision. Set status to Published.
-3. Wait for the signal handler to index both (look for `auto_queued_document_revision_for_indexing` in backend logs).
-4. Verify with the chat that retrieval reaches both documents.
+Run `../sync-demo.sh` from the repo root. It is idempotent and handles everything: starting the stack, waiting for backend health, initialising Qdrant, indexing the framework libraries the first time only, and running the `setup_demo` management command to publish the two policies.
+
+`setup_demo` reads the markdown files in this directory and:
+
+1. Creates the **Lorem Ipsum Wealth Partners** Folder.
+2. Creates a Policy `FINOS AI Readiness Governance Framework (adopted)` and publishes a DocumentRevision with the contents of `finos-air-governance-subset.md`.
+3. Creates a Policy `AI Governance Policy` and publishes a DocumentRevision with the contents of `lorem-ipsum-wealth-partners-ai-governance-policy-v1-prose.md`.
+
+The signals patch (`patches/signals.py`) indexes both into Qdrant the moment their revisions are published.
+
+To start over from a clean slate:
+
+```bash
+docker compose exec backend poetry run python manage.py setup_demo --reset
+```
+
+To edit a policy: change the markdown here, then re-run `./sync-demo.sh`. The command notices the content change and publishes a new revision; the signals patch retires the old chunks and indexes the new ones automatically.
 
 ## Attribution
 
