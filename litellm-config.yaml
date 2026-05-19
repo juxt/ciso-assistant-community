@@ -1,0 +1,13 @@
+model_list:
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: os.environ/ANTHROPIC_API_KEY
+      # claude-opus-4-7 rejects `temperature` entirely (deprecated for this model);
+      # CISO Assistant's chat code sends it, so strip before forwarding.
+      drop_params: true
+      additional_drop_params:
+        - temperature
+
+litellm_settings:
+  drop_params: true

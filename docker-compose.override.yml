@@ -1,0 +1,41 @@
+services:
+  backend:
+    # Pin to digest captured 2026-05-19 for reproducibility (upstream is :latest)
+    image: ghcr.io/intuitem/ciso-assistant-community/backend@sha256:5cdf2dd356495ba4101633cd6e2e6be43af99ddcd054fb28d0eee4d88bb4d0cf
+    environment:
+      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:?set in .env}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:?set in .env}
+      - ENABLE_CHAT=true
+    volumes:
+      # Overlay patched chat module files — see patches/README for rationale
+      - ./patches/knowledge_graph.py:/code/chat/knowledge_graph.py:ro
+      - ./patches/tools.py:/code/chat/tools.py:ro
+
+  huey:
+    image: ghcr.io/intuitem/ciso-assistant-community/backend@sha256:5cdf2dd356495ba4101633cd6e2e6be43af99ddcd054fb28d0eee4d88bb4d0cf
+    environment:
+      - ENABLE_CHAT=true
+    volumes:
+      - ./patches/knowledge_graph.py:/code/chat/knowledge_graph.py:ro
+      - ./patches/tools.py:/code/chat/tools.py:ro
+
+  frontend:
+    image: ghcr.io/intuitem/ciso-assistant-community/frontend@sha256:7179e129a5c54003ebf12581a1c464638f11ed4f69634f50dbb5e96a83221ddf
+
+  qdrant:
+    image: qdrant/qdrant@sha256:f21bbaf111837592b70f4d727c62cf6d6525b5374b1193e9faeac26a953702a8
+
+  caddy:
+    image: caddy@sha256:25cdc846626b62d05f6b633b9b40c2c9f6ef89b515dc76133cefd920f7dbe562
+
+  litellm:
+    image: ghcr.io/berriai/litellm@sha256:2e8517e2bed423c50ab7e40fb1ac0a9cbe62a764e9d65161d871fb6a9bf75a2d
+    container_name: litellm
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY must be set in .env}
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "127.0.0.1:4000:4000"
