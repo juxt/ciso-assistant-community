@@ -1145,22 +1145,73 @@ def _dispatch_search_library(arguments: dict, user_message: str = "") -> dict | 
 
     if _is_empty(data):
         try:
-            from .rag import search as _vector_search
+            from qdrant_client.models import (
+                FieldCondition,
+                Filter,
+                MatchAny,
+            )
+
+            from .providers import get_embedder
+            from .rag import COLLECTION_NAME, get_qdrant_client
+
             vector_q = (user_message or query or framework or "").strip()
             if vector_q:
-                hits = _vector_search(
-                    vector_q, user=None, top_k=8, source_type="library"
-                )
-                if hits:
-                    lines = ["Vector search fallback (library):"]
-                    for h in hits:
-                        fw = h.get("framework", "")
-                        ref = h.get("ref_id", "")
-                        txt = (h.get("text") or "").replace("\n", " ")[:500]
-                        lines.append(f"- [{fw} {ref}] {txt}")
-                    return {"type": "search_library", "text": "\n".join(lines)}
+                embedder = get_embedder()
+                qv = embedder.embed_query(vector_q)
+                # Search the library partition (community frameworks) and the
+                # document partition (firm policies) SEPARATELY then merge.
+                # If we did one query the library partition (65k chunks) would
+                # crowd out the document partition (~tens of chunks) every
+                # time, so the firm policy would never reach the LLM via this
+                # tool path. We bias toward firm-policy content because it's
+                # the demo's source of truth; library content is supporting
+                # material.
+                client = get_qdrant_client()
+
+                def _query(source_type_value: str, limit: int):
+                    return client.query_points(
+                        collection_name=COLLECTION_NAME,
+                        query=qv,
+                        limit=limit,
+                        query_filter=Filter(
+                            must=[
+                                FieldCondition(
+                                    key="source_type",
+                                    match=MatchAny(any=[source_type_value]),
+                                )
+                            ]
+                        ),
+                    ).points
+
+                doc_points = _query("document", 6)
+                lib_points = _query("library", 6)
+                points = list(doc_points) + list(lib_points)
+                if points:
+                    lines = [
+                        "Vector search fallback (library + firm policies):"
+                    ]
+                    for p in points:
+                        payload = p.payload or {}
+                        src = payload.get("source_type", "")
+                        if src == "library":
+                            label = (
+                                f"{payload.get('framework','')} "
+                                f"{payload.get('ref_id','')}"
+                            ).strip()
+                        else:
+                            label = payload.get("filename", "document")
+                        text = (
+                            payload.get("text") or ""
+                        ).replace("\n", " ")[:500]
+                        lines.append(f"- [{label}] {text}")
+                    return {
+                        "type": "search_library",
+                        "text": "\n".join(lines),
+                    }
         except Exception as _vec_err:
-            logger.warning("search_library_vector_fallback_failed", error=str(_vec_err))
+            logger.warning(
+                "search_library_vector_fallback_failed", error=str(_vec_err)
+            )
 
     return {"type": "search_library", "text": format_graph_result(data)}
 
