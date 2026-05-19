@@ -82,6 +82,8 @@ class Command(BaseCommand):
         for spec in POLICIES:
             self._setup_policy(folder, spec)
 
+        self._configure_chat_settings()
+
         self.stdout.write("")
         self.stdout.write(
             self.style.SUCCESS(
@@ -91,6 +93,35 @@ class Command(BaseCommand):
                 "'Indexed document'."
             )
         )
+
+    def _configure_chat_settings(self):
+        """
+        Wire CISO Assistant's GlobalSettings to point the chat at our LiteLLM
+        proxy. Used to be a manual step in the UI; bootstrapping it here means
+        a fresh `./sync-demo.sh` lands a fully-configured demo.
+        """
+        from global_settings.models import GlobalSettings
+
+        target = {
+            "llm_provider": "openai_compatible",
+            "openai_api_base": "http://litellm:4000/v1",
+            "openai_model": "claude-sonnet",
+            "openai_api_key": "",
+            "embedding_backend": "sentence-transformers",
+        }
+        gs, _ = GlobalSettings.objects.get_or_create(name="general", defaults={"value": {}})
+        current = gs.value or {}
+        changed = False
+        for k, v in target.items():
+            if current.get(k) != v:
+                current[k] = v
+                changed = True
+        if changed:
+            gs.value = current
+            gs.save(update_fields=["value"])
+            self.stdout.write(self.style.SUCCESS("updated chat settings (LLM provider, model, base URL)"))
+        else:
+            self.stdout.write("chat settings already configured")
 
     def _setup_policy(self, folder, spec):
         from core.models import Policy

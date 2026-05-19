@@ -61,7 +61,7 @@ class Command(BaseCommand):
         check("fallback surfaces firm policy, not just library", self._check_fallback_reaches_firm_policy)
         check("IndexedDocument.post_delete cleanup handler is registered", self._check_cleanup_signal)
         check("both demo policies are indexed in Qdrant", self._check_demo_policies_indexed)
-        check("chat settings point at LiteLLM with claude-opus", self._check_chat_settings)
+        check("chat settings point at LiteLLM with claude-sonnet", self._check_chat_settings)
         check("LiteLLM round-trip succeeds with temperature stripped", self._check_litellm_roundtrip)
 
         total = len(passed) + len(failed) + len(warned)
@@ -222,7 +222,7 @@ class Command(BaseCommand):
         if provider != "openai_compatible":
             raise AssertionError(
                 f"llm_provider is {provider!r}; expected 'openai_compatible'. "
-                f"Set this in Settings > General in the UI."
+                "setup_demo configures this automatically; re-run it."
             )
         api_base = settings.get("openai_api_base", "")
         if "litellm" not in api_base and "4000" not in api_base:
@@ -231,9 +231,9 @@ class Command(BaseCommand):
                 "(http://litellm:4000/v1)"
             )
         model = settings.get("openai_model")
-        if model != "claude-opus":
+        if model != "claude-sonnet":
             raise AssertionError(
-                f"openai_model is {model!r}; expected 'claude-opus'"
+                f"openai_model is {model!r}; expected 'claude-sonnet'"
             )
 
     def _check_litellm_roundtrip(self):
@@ -251,7 +251,7 @@ class Command(BaseCommand):
                 resp = httpx.post(
                     "http://litellm:4000/v1/chat/completions",
                     json={
-                        "model": "claude-opus",
+                        "model": "claude-sonnet",
                         "temperature": 0.5,  # confirms LiteLLM strips it
                         "messages": [
                             {"role": "user", "content": "Reply with the single word OK."}

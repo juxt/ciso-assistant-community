@@ -1,13 +1,20 @@
 model_list:
-  - model_name: claude-opus
+  - model_name: claude-sonnet
     litellm_params:
-      model: anthropic/claude-opus-4-7
+      model: anthropic/claude-sonnet-4-6
       api_key: os.environ/ANTHROPIC_API_KEY
-      # claude-opus-4-7 rejects `temperature` entirely (deprecated for this model);
-      # CISO Assistant's chat code sends it, so strip before forwarding.
+      # Sonnet 4.6 also rejects an explicit temperature value. CISO Assistant's
+      # chat code sends it unconditionally, so strip before forwarding.
       drop_params: true
       additional_drop_params:
         - temperature
+      # Anthropic returns overloaded_error in waves. Retry before surfacing
+      # failure to the chat. Note: mid-stream overload failures cannot be
+      # retried at the LiteLLM layer — these retries cover pre-stream errors.
+      num_retries: 5
+      timeout: 120
 
 litellm_settings:
   drop_params: true
+  request_timeout: 120
+  num_retries: 5
