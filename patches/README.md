@@ -14,6 +14,14 @@ Fix: add a single-token stopword filter and raise the threshold to 0.5. Multi-to
 
 Fix: when the graph search returns nothing, fall back to a vector search over the `library` partition and return those hits.
 
+## `signals.py`
+
+The chat module auto-ingests `EvidenceRevision` attachments into the RAG store, but does nothing with `ManagedDocument` / `DocumentRevision`. So a firm's own policies — modelled as first-class `Policy` documents — are invisible to the chat. The evidence handler is also insert-only: editing or deleting an evidence attachment leaves stale chunks behind.
+
+Fix: add a `_connect_document_revision_signal` handler with a fuller lifecycle than the evidence one. On revision save with status Published, retire any prior chunks for that revision and any other indexed revisions of the same `ManagedDocument`, then re-ingest. On revision save with non-Published status, retire its chunks (covers demotion, deprecation). On revision delete, retire its chunks. ManagedDocument deletion cascades naturally through Django to revisions.
+
+The evidence handler should arguably get the same lifecycle treatment in upstream. Not done here to keep the demo overlay minimal.
+
 ## Upstreaming
 
 Both patches are candidates for an upstream PR. If you do that, drop this overlay arrangement from `docker-compose.override.yml` once the fix lands in a tagged backend image.

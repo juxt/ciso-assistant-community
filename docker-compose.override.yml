@@ -10,6 +10,7 @@ services:
       # Overlay patched chat module files — see patches/README for rationale
       - ./patches/knowledge_graph.py:/code/chat/knowledge_graph.py:ro
       - ./patches/tools.py:/code/chat/tools.py:ro
+      - ./patches/signals.py:/code/chat/signals.py:ro
 
   huey:
     image: ghcr.io/intuitem/ciso-assistant-community/backend@sha256:5cdf2dd356495ba4101633cd6e2e6be43af99ddcd054fb28d0eee4d88bb4d0cf
@@ -18,6 +19,7 @@ services:
     volumes:
       - ./patches/knowledge_graph.py:/code/chat/knowledge_graph.py:ro
       - ./patches/tools.py:/code/chat/tools.py:ro
+      - ./patches/signals.py:/code/chat/signals.py:ro
 
   frontend:
     image: ghcr.io/intuitem/ciso-assistant-community/frontend@sha256:7179e129a5c54003ebf12581a1c464638f11ed4f69634f50dbb5e96a83221ddf
