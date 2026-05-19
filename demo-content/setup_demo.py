@@ -35,6 +35,11 @@ POLICIES = [
             "Foundational AI risk catalogue maintained by the Fintech Open Source "
             "Foundation, adopted as the firm's baseline. CC BY 4.0."
         ),
+        # Initial DocumentRevision status. "published" makes it retrievable
+        # by the chat immediately. "draft" creates the document but holds
+        # back indexing; useful for the Allium spec which the demo toggles
+        # in and out via enable_allium/disable_allium.
+        "initial_status": "published",
     },
     {
         "name": "AI Governance Policy",
@@ -43,6 +48,17 @@ POLICIES = [
             "The firm's operationalisation of the FINOS AIR Governance Framework. "
             "Defines roles, tier criteria, controls per tier, and domain obligations."
         ),
+        "initial_status": "published",
+    },
+    {
+        "name": "AI Governance Policy — Executable Specification",
+        "file": "liwp-ai-governance.allium",
+        "description": (
+            "The firm's AI Governance Policy expressed in Allium — the executable "
+            "form of LIWP-POL-AI-001. Indexed only when Allium mode is enabled."
+        ),
+        # The demo starts in foil mode. enable_allium promotes this to Published.
+        "initial_status": "draft",
     },
 ]
 
@@ -155,39 +171,48 @@ class Command(BaseCommand):
         if d_created:
             self.stdout.write("           managed document attached")
 
-        latest_published = (
-            DocumentRevision.objects
-            .filter(document=managed_doc, status=DocumentRevision.Status.PUBLISHED)
-            .order_by("-version_number")
-            .first()
+        target_status_str = spec.get("initial_status", "published")
+        target_status = (
+            DocumentRevision.Status.DRAFT
+            if target_status_str == "draft"
+            else DocumentRevision.Status.PUBLISHED
         )
-        if (
-            latest_published
-            and latest_published.content.strip() == content.strip()
-        ):
-            self.stdout.write(
-                f"           revision v{latest_published.version_number} unchanged, "
-                f"skipping (no re-index)"
-            )
-            return
 
         latest_any = (
             DocumentRevision.objects.filter(document=managed_doc)
             .order_by("-version_number")
             .first()
         )
-        next_version = (latest_any.version_number + 1) if latest_any else 1
 
+        # If a revision already exists with matching content and status, no-op.
+        if (
+            latest_any
+            and latest_any.content.strip() == content.strip()
+            and latest_any.status == target_status
+        ):
+            self.stdout.write(
+                f"           revision v{latest_any.version_number} "
+                f"({target_status_str}) unchanged"
+            )
+            return
+
+        next_version = (latest_any.version_number + 1) if latest_any else 1
         DocumentRevision.objects.create(
             folder=folder,
             document=managed_doc,
             version_number=next_version,
             content=content,
-            status=DocumentRevision.Status.PUBLISHED,
+            status=target_status,
         )
+        if target_status == DocumentRevision.Status.PUBLISHED:
+            tail = "indexing queued"
+            verb = "published"
+        else:
+            tail = "not indexed (Draft)"
+            verb = "saved as draft"
         self.stdout.write(
             self.style.SUCCESS(
-                f"           published revision v{next_version} "
-                f"({len(content):,} chars) — indexing queued"
+                f"           {verb} revision v{next_version} "
+                f"({len(content):,} chars) — {tail}"
             )
         )
