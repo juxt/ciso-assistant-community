@@ -13,6 +13,14 @@ model_list:
       # retried at the LiteLLM layer — these retries cover pre-stream errors.
       num_retries: 5
       timeout: 120
+      # Extended thinking: give the model budget to verify its own work
+      # before emitting tokens. Critical for spec-name fidelity — without
+      # it the model paraphrases identifiers; with it the model has a
+      # chance to check spec names against the retrieved chunks before
+      # committing to a response.
+      thinking:
+        type: "enabled"
+        budget_tokens: 4000
 
 litellm_settings:
   drop_params: true

@@ -213,6 +213,15 @@ def extract_text(file) -> list[Chunk]:
     if isinstance(content, bytes):
         content = content.decode("utf-8", errors="replace")
 
+    # Demo patch: Allium spec files (`.allium`) are designed to be read top
+    # to bottom; their rules, invariants and entities cross-reference one
+    # another and lose meaning when chunked. Detect the language marker at
+    # the head of the file and return the whole spec as a single chunk so
+    # the model receives it as one coherent document under a single source
+    # header.
+    if content.lstrip().startswith("-- allium:"):
+        return [Chunk(text=content, index=0, metadata={"format": "allium"})]
+
     if re.search(r"(?m)^## ", content):
         return _chunk_by_markdown_sections(content)
 

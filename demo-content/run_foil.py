@@ -44,15 +44,27 @@ FOLDER_NAME = "Lorem Ipsum Wealth Partners"
 SARAH_PROMPTS = [
     # 1 — opener with the submission paste
     None,  # placeholder, computed from SUBMISSION_FILE
-    # 2 — tier
+    # 2 — vocabulary warm-up. Seeds exact spec identifiers into the chat
+    # history so subsequent turns inherit them via the model's
+    # consistency-with-prior-responses preference, instead of inheriting
+    # paraphrased ones. Skipped in fresh-per-prompt mode.
+    (
+        "Before we work through this submission, orient me on the firm's AI "
+        "Governance Policy Allium spec. List every rule by name, every "
+        "invariant by name, every value of the ControlRequirement enum, and "
+        "every open question. Use the exact names as they appear in the "
+        "spec — do not paraphrase, do not group them under your own labels. "
+        "Plain lists, no commentary."
+    ),
+    # 3 — tier
     "Help me work through this. Read me your view on the tier.",
-    # 3 — High-tier control gaps
+    # 4 — High-tier control gaps
     "Walk me through what High requires that isn't in the submission.",
-    # 4 — HITL
+    # 5 — HITL
     "Their HITL claim says 'advisor reviews each draft'. What does the policy actually require of HITL?",
-    # 5 — Reg BI
+    # 6 — Reg BI
     "Reg BI exposure. Has anyone mapped this submission against the firm's rollover obligations?",
-    # 6 — Precedent
+    # 7 — Precedent
     "Have we approved comparable AI deployments before? What were the conditions?",
 ]
 
@@ -181,6 +193,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="https://localhost:8443",
                         help="Base URL of the CISO Assistant API (default: %(default)s)")
+    parser.add_argument(
+        "--fresh-per-prompt", action="store_true",
+        help=("Run each prompt in its own fresh chat session, isolating "
+              "from chat-history pollution. The submission paste is sent "
+              "first in every session as orientation. Useful for testing "
+              "spec-grounding cleanly. Default is a single multi-turn "
+              "session (Sarah's actual demo flow)."),
+    )
     args = parser.parse_args()
     base = args.base.rstrip("/")
 
@@ -213,24 +233,48 @@ def main():
     folder_id = find_folder_id(base, token, FOLDER_NAME)
     print(f"    {folder_id}")
 
-    print("==> creating chat session")
-    session_id = create_session(base, token, folder_id)
-    print(f"    {session_id}")
-
     responses: list[tuple[str, str]] = []
-    for i, prompt in enumerate(prompts, 1):
-        snippet = re.sub(r"\s+", " ", prompt)[:80]
-        print(f"==> exchange {i}/{len(prompts)}: {snippet!r}")
-        t0 = time.time()
-        try:
-            assistant, thinking = send_message_streaming(base, token, session_id, prompt)
-        except (HTTPError, URLError) as e:
-            print(f"    request failed: {e}")
-            responses.append((f"[ERROR] {e}", ""))
-            continue
-        dt = time.time() - t0
-        print(f"    {len(assistant):,} chars assistant, {len(thinking):,} chars thinking, {dt:.1f}s")
-        responses.append((assistant, thinking))
+    if not args.fresh_per_prompt:
+        # Single multi-turn session (Sarah's demo flow).
+        print("==> creating chat session (single multi-turn)")
+        session_id = create_session(base, token, folder_id)
+        print(f"    {session_id}")
+        for i, prompt in enumerate(prompts, 1):
+            snippet = re.sub(r"\s+", " ", prompt)[:80]
+            print(f"==> exchange {i}/{len(prompts)}: {snippet!r}")
+            t0 = time.time()
+            try:
+                assistant, thinking = send_message_streaming(base, token, session_id, prompt)
+            except (HTTPError, URLError) as e:
+                print(f"    request failed: {e}")
+                responses.append((f"[ERROR] {e}", ""))
+                continue
+            dt = time.time() - t0
+            print(f"    {len(assistant):,} chars assistant, {len(thinking):,} chars thinking, {dt:.1f}s")
+            responses.append((assistant, thinking))
+    else:
+        # Fresh session per prompt. The submission paste (prompt 0) is sent
+        # first in every session as orientation, then the actual follow-up.
+        print("==> running each prompt in a fresh session")
+        submission_opener = prompts[0]
+        for i, prompt in enumerate(prompts, 1):
+            session_id = create_session(base, token, folder_id)
+            snippet = re.sub(r"\s+", " ", prompt)[:80]
+            print(f"==> exchange {i}/{len(prompts)} (session {session_id[:8]}): {snippet!r}")
+            t0 = time.time()
+            try:
+                # Re-send the submission paste as orientation for every fresh
+                # session except the first (which IS the submission paste).
+                if i > 1:
+                    send_message_streaming(base, token, session_id, submission_opener)
+                assistant, thinking = send_message_streaming(base, token, session_id, prompt)
+            except (HTTPError, URLError) as e:
+                print(f"    request failed: {e}")
+                responses.append((f"[ERROR] {e}", ""))
+                continue
+            dt = time.time() - t0
+            print(f"    {len(assistant):,} chars assistant, {len(thinking):,} chars thinking, {dt:.1f}s")
+            responses.append((assistant, thinking))
 
     outpath = write_transcript(base, prompts, responses)
     print(f"\n==> transcript written to {outpath}")
