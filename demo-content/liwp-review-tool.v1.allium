@@ -1,0 +1,357 @@
+-- allium: 3
+-- liwp-review-tool.v1.allium
+--
+-- Lorem Ipsum Wealth Partners — AI Governance Policy, executable form.
+--
+-- Slice B of LIWP-POL-AI-001 (v1, pre-amendment). This file describes
+-- the AI Governance Office's review process: how a submission
+-- progresses through the lifecycle, what surfaces the reviewer and
+-- the AI copilot expose, what findings the review raises, and what
+-- the deployment register records.
+--
+-- Slice B sits on top of Slice A. The companion file
+-- liwp-ai-system-obligations.v1.allium captures the obligations the
+-- policy places on AI systems being deployed. Slice A is the file
+-- the firm's compliance audit tooling reads. Slice B is what the AI
+-- Governance Office's review tooling implements.
+
+use "./liwp-ai-system-obligations.v1.allium" as ai
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity User {}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+-- The AI Deployment Register (§6). Approved and conditionally-
+-- approved submissions are recorded here. Subsequent submissions
+-- inherit conditions from comparable prior entries unless materially
+-- differing circumstances are documented.
+entity DeploymentRegisterEntry {
+    submission: ai/AIDeploymentSubmission
+    approved_at: Timestamp
+    -- Conditions imposed at approval (§6). For conditional approvals
+    -- these are obligations to complete before the conditions clear;
+    -- they carry forward to comparable subsequent submissions.
+    conditions: Set<ai/ControlRequirement>
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- §6: a submission is created in pending_review when the Business
+-- Sponsor lodges the AI Risk Assessment Form.
+rule SubmitForReview {
+    when: SponsorSubmits(submitter, system, asserted_controls)
+    ensures:
+        ai/AIDeploymentSubmission.created(
+            system: system,
+            submitted_by: submitter,
+            submitted_at: now,
+            asserted_controls: asserted_controls,
+            status: pending_review,
+            precedent_override_documented: false
+        )
+}
+
+-- §4: tier classification. Three rules, mutually exclusive by
+-- requires-clause structure, fired when the reviewer assigns a tier.
+
+rule ClassifyHigh {
+    when: ReviewerClassifies(submission, by)
+    requires:
+        submission.system.is_customer_facing
+        and submission.system.makes_consequential_recommendations
+    ensures:
+        submission.assigned_tier = high
+}
+
+rule ClassifyMedium {
+    when: ReviewerClassifies(submission, by)
+    requires:
+        not (
+            submission.system.is_customer_facing
+            and submission.system.makes_consequential_recommendations
+        )
+        and (
+            submission.system.is_customer_facing
+            or submission.system.engages_material_finos_risks
+            or submission.system.is_broad_population
+        )
+    ensures:
+        submission.assigned_tier = medium
+}
+
+rule ClassifyLow {
+    when: ReviewerClassifies(submission, by)
+    requires:
+        submission.system.is_pure_back_office
+        and not submission.system.is_customer_facing
+        and not submission.system.makes_consequential_recommendations
+        and not submission.system.engages_material_finos_risks
+        and not submission.system.is_broad_population
+    ensures:
+        submission.assigned_tier = low
+}
+
+-- §8: passive HITL is not HITL. Raise a blocking finding when a
+-- submission claims defined_hitl but its arrangement fails the
+-- substantive test in §8 (notably the anti-default clause).
+rule FlagPassiveHITL {
+    when: ReviewerInspects(submission, by)
+    requires:
+        defined_hitl in submission.asserted_controls
+        and (
+            not exists submission.hitl
+            or not submission.hitl.is_substantive
+        )
+    ensures:
+        ai/ReviewerFinding.created(
+            submission: submission,
+            category: hitl_design,
+            severity: blocking,
+            citation: { document_ref: "LIWP-POL-AI-001", section: "§8" },
+            summary: "HITL claimed but arrangement is not substantive (see §8).",
+            raised_at: now
+        )
+}
+
+-- §7.1: a customer-facing advice system must carry the firm's Reg BI
+-- surfaces in its outputs. Raise a blocking finding when any of the
+-- obligations is missing.
+rule FlagMissingRegBIObligations {
+    when: ReviewerInspects(submission, by)
+    requires:
+        submission.system.regulatory_domain = advice
+        and submission.system.is_customer_facing
+        and not (
+            reg_bi_fee_comparison_surface in submission.asserted_controls
+            and reg_bi_account_type_comparison_surface in submission.asserted_controls
+            and reg_bi_suitability_analysis_surface in submission.asserted_controls
+            and reg_bi_nua_treatment_surface in submission.asserted_controls
+            and reg_bi_conflict_disclosure_surface in submission.asserted_controls
+        )
+    ensures:
+        ai/ReviewerFinding.created(
+            submission: submission,
+            category: reg_bi_obligation,
+            severity: blocking,
+            citation: { document_ref: "LIWP-POL-AI-001", section: "§7.1" },
+            summary: "One or more Reg BI obligation surfaces required for customer-facing advice systems are not asserted.",
+            raised_at: now
+        )
+}
+
+-- §6 deployment lifecycle. Approve, conditionally approve, clear,
+-- reject and withdraw. Authority is enforced at the surface level
+-- (see AIGovernanceReview).
+
+rule ApproveSubmission {
+    when: ReviewerApproves(submission, by)
+    requires:
+        submission.status = pending_review
+        and not ai/ReviewerFindings.any(f => f.submission = submission and f.severity = blocking)
+    ensures:
+        submission.status = approved
+        DeploymentRegisterEntry.created(
+            submission: submission,
+            approved_at: now,
+            conditions: {}
+        )
+}
+
+rule ConditionallyApproveSubmission {
+    when: ReviewerConditionallyApproves(submission, by, conditions)
+    requires:
+        submission.status = pending_review
+        and not ai/ReviewerFindings.any(f => f.submission = submission and f.severity = blocking)
+    ensures:
+        submission.status = conditional_approval
+        DeploymentRegisterEntry.created(
+            submission: submission,
+            approved_at: now,
+            conditions: conditions
+        )
+}
+
+rule ClearConditions {
+    when: ReviewerClearsConditions(submission, by)
+    requires:
+        submission.status = conditional_approval
+        and not ai/ReviewerFindings.any(f => f.submission = submission and f.severity = blocking)
+    ensures:
+        submission.status = approved
+}
+
+rule RejectSubmission {
+    when: ReviewerRejects(submission, by)
+    requires:
+        submission.status in {pending_review, conditional_approval}
+    ensures:
+        submission.status = rejected
+}
+
+rule WithdrawSubmission {
+    when: SubmitterWithdraws(submission, by)
+    requires:
+        submission.status in {pending_review, conditional_approval}
+    ensures:
+        submission.status = withdrawn
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+-- §6: conditions imposed on comparable prior approvals carry forward
+-- to subsequent submissions unless the submitter documents materially
+-- differing circumstances. Two submissions are comparable when they
+-- share regulatory_domain, customer-facing posture and assigned_tier.
+invariant PrecedentConditionsCarryForward {
+    for s in ai/AIDeploymentSubmissions:
+        for entry in DeploymentRegisterEntries:
+            (
+                entry.submission != s
+                and entry.submission.system.regulatory_domain = s.system.regulatory_domain
+                and entry.submission.system.is_customer_facing = s.system.is_customer_facing
+                and entry.submission.assigned_tier = s.assigned_tier
+                and not s.precedent_override_documented
+            ) implies entry.conditions.all(c => c in s.asserted_controls)
+}
+
+-- §6: an approved submission must have no open blocking findings.
+invariant ApprovedSubmissionsHaveNoBlockingFindings {
+    for s in ai/AIDeploymentSubmissions:
+        s.status = approved implies not ai/ReviewerFindings.any(f =>
+            f.submission = s and f.severity = blocking
+        )
+}
+
+------------------------------------------------------------
+-- Actors
+------------------------------------------------------------
+
+actor BusinessSponsor {
+    identified_by: User
+}
+
+actor AIGovernanceReviewer {
+    identified_by: User
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+-- The boundary between the AI copilot and the second-line reviewer.
+-- The copilot reads from the submission, the policy spec (both
+-- slices) and the deployment register; it surfaces tier, missing
+-- controls, HITL findings, Reg BI findings and precedent. It does
+-- not decide; decisions are taken via AIGovernanceReview.
+surface CopilotReview {
+    facing reviewer: AIGovernanceReviewer
+
+    context submission: ai/AIDeploymentSubmission
+        where status = pending_review or status = conditional_approval
+
+    exposes:
+        submission.system.name
+        submission.system.is_customer_facing
+        submission.system.makes_consequential_recommendations
+        submission.system.regulatory_domain
+        submission.assigned_tier
+        submission.asserted_controls
+        submission.hitl
+        submission.findings
+
+    provides:
+        ReviewerInspects(submission, reviewer)
+
+    @guarantee NeverInventsControls
+        -- The copilot returns only ControlRequirement values declared
+        -- in Slice A. External best-practice references are clearly
+        -- labelled as such and distinguished from the firm's required
+        -- control set.
+
+    @guarantee CitesPolicyOnEveryClaim
+        -- Every assertion the copilot makes about policy compliance
+        -- carries a PolicyCitation pointing at LIWP-POL-AI-001 or at
+        -- a named rule or invariant in either slice.
+
+    @guidance
+        -- This surface assumes the submission has already been
+        -- ingested into the system. The copilot does not author
+        -- submissions on behalf of Business Sponsors and does not
+        -- approve, reject or conditionally approve — those are the
+        -- reviewer's authority, exercised through AIGovernanceReview.
+}
+
+-- §3, §6: the human reviewer's decision surface. Authority for High
+-- tier requires the AI Governance Committee — encoded as the guard
+-- requiring governance_committee_approval in the asserted_controls.
+surface AIGovernanceReview {
+    facing reviewer: AIGovernanceReviewer
+
+    context submission: ai/AIDeploymentSubmission
+        where status = pending_review or status = conditional_approval
+
+    exposes:
+        submission.system
+        submission.assigned_tier
+        submission.asserted_controls
+        submission.findings
+
+    provides:
+        ReviewerClassifies(submission, reviewer)
+            when submission.assigned_tier = null
+
+        ReviewerApproves(submission, reviewer)
+            when not ai/ReviewerFindings.any(f => f.submission = submission and f.severity = blocking)
+                 and (
+                     submission.assigned_tier in {low, medium}
+                     or governance_committee_approval in submission.asserted_controls
+                 )
+
+        ReviewerConditionallyApproves(submission, reviewer, conditions)
+            when not ai/ReviewerFindings.any(f => f.submission = submission and f.severity = blocking)
+
+        ReviewerRejects(submission, reviewer)
+
+        ReviewerClearsConditions(submission, reviewer)
+            when submission.status = conditional_approval
+                 and not ai/ReviewerFindings.any(f => f.submission = submission and f.severity = blocking)
+}
+
+-- §3, §6: the Business Sponsor's surface. Submit a new deployment
+-- for review or withdraw a submission before final decision.
+surface BusinessSponsorPortal {
+    facing sponsor: BusinessSponsor
+
+    context submission: ai/AIDeploymentSubmission
+        where status in {pending_review, conditional_approval}
+
+    exposes:
+        submission.status
+        submission.assigned_tier
+        submission.findings
+
+    provides:
+        SponsorSubmits(sponsor, system, asserted_controls)
+        SubmitterWithdraws(submission, sponsor)
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+-- Review-tool open questions. Obligations-side open questions live
+-- in Slice A.
+
+open question "OQ-Default-Presumption-Override: §4.2 says the reviewer 'may depart from the presumption with documented rationale'. The classification rules in v1 do not model the override path. How is a documented rationale captured and what changes about the review?"
+
+open question "OQ-Exception-Path: §9 permits the AI Governance Committee to grant exceptions to §5 requirements on the basis of documented business case, mitigating controls and re-review date. The spec does not model the Exception entity, the carry-forward of mitigating controls or the re-review clock. Adding this would require an Exception entity scoped to a submission, with a status transition graph for re-review."

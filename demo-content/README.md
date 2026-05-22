@@ -6,6 +6,7 @@ Source-of-truth markdown for documents that get pasted into CISO Assistant Manag
 
 - **`finos-air-governance-subset.md`** — A subset of the FINOS AI Readiness (AIR) Governance Framework, v2 (Oct 2025), reproduced under CC BY 4.0. Six risks: AIR-OP-004, AIR-OP-014, AIR-OP-016, AIR-OP-017, AIR-OP-018, AIR-RC-022. Goes in as the foundational risk catalogue the firm operationalises against.
 - **`lorem-ipsum-wealth-partners-ai-governance-policy-v1-prose.md`** — The fictional firm's natural-language AI Governance Policy, written as its operationalisation of FINOS. This is the *foil* version. The AI struggles to apply it consistently because corporate prose is ambiguous.
+- **`meridian-ai-advisor-submission.md`** — A deployment submission from the Markets Division lodging the Meridian AI Scenario Advisor (codename Lighthouse) for second-line review. Loaded as a `RECORD`-type ManagedDocument so the chat retrieves it on its own — Sarah doesn't paste it inline. Used as the worked example in beat 1 of the demo flow. The submission contains five observable cracks (single-shot HITL, session-boundary-only audit, hardcoded model identifier, no MaterialIncident concept, tier reasoning that ignores autonomy) that the v2 amendment will surface.
 
 ## Seeded ambiguities in the policy
 

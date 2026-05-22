@@ -1,0 +1,564 @@
+-- allium: 3
+-- liwp-ai-system-obligations.v2.allium
+--
+-- Lorem Ipsum Wealth Partners — AI Governance Policy, executable form.
+--
+-- Slice A of LIWP-POL-AI-001 (v2 amended). This file captures the
+-- obligations the policy places on AI systems being deployed by the
+-- firm: the entities a system must model, the controls it must
+-- assert, the invariants its compliance posture must satisfy, and
+-- the evidence (trace logs, model ledgers, material incidents) it
+-- must produce. This is the file consumed by the firm's compliance
+-- audit tooling when assessing a candidate AI system.
+--
+-- The companion file liwp-review-tool.v2.allium (Slice B) describes
+-- the AI Governance Office's review process: submissions lifecycle,
+-- reviewer surfaces, the deployment register, and the AI copilot
+-- that assists second-line review. Slice B uses this file.
+--
+-- v2 AMENDMENT (December 2025): adopted in response to the FINRA
+-- Regulatory Oversight Report on agentic AI. Five amendments are
+-- applied throughout this file, each marked with the comment prefix
+--   -- AMEND v2:
+-- The amendments are:
+--   A1. is_agentic factor added to AISystem (§4.1).
+--   A2. HITL substantiveness extended to per-action review for
+--       multi-step agentic systems (§8).
+--   A3. agent_action_trace_log control added (§5.4, new) and
+--       required for is_agentic systems.
+--   A4. ModelVersionLedger entity added to capture model and vendor
+--       substitutions (§6, closes OQ-Vendor-Change).
+--   A5. MaterialIncident entity and classification rules added
+--       (§10, closes OQ-Material-Incident-Reporting).
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value PolicyCitation {
+    document_ref: String        -- e.g. "LIWP-POL-AI-001"
+    section: String             -- e.g. "§4.1(b)"
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum RiskTier {
+    low | medium | high
+}
+
+enum RegulatoryDomain {
+    advice           -- §7.1: client recommendations
+    | credit         -- §7.2: credit and lending decisions
+    | privacy        -- §7.3: personal data processing
+    | none
+}
+
+-- The vocabulary of controls the policy refers to. Names mirror §5.
+enum ControlRequirement {
+    -- Low and above (§5.1)
+    documented_purpose
+    | model_card
+    | inclusion_in_deployment_register
+    | basic_monitoring
+    -- Medium and above (§5.2)
+    | pre_launch_internal_review
+    | defined_hitl
+    | monitoring_plan_pre_launch
+    | training_data_provenance
+    | domain_obligation_mapping
+    -- High only (§5.3)
+    | independent_validation_by_mrm
+    | pre_launch_red_team
+    | incident_response_runbook
+    | continuous_red_team_rotation
+    | output_citations_traceability
+    | governance_committee_approval
+    -- Domain-specific (§7.1): Reg BI obligations for customer-facing
+    -- advice systems. The Care Obligation (§240.15l-1(a)(2)(ii)) requires
+    -- the firm to have a reasonable basis to believe a recommendation is
+    -- in the retail customer's best interest. For AI-drafted client
+    -- communications, the firm satisfies this through documented surfaces
+    -- in the recommendation workflow.
+    | reg_bi_fee_comparison_surface
+    | reg_bi_account_type_comparison_surface
+    | reg_bi_suitability_analysis_surface
+    | reg_bi_nua_treatment_surface
+    | reg_bi_conflict_disclosure_surface
+    -- §7.2: Fair lending obligations for credit/lending systems.
+    | fair_lending_disparate_impact_analysis
+    -- §7.3: Privacy obligations for systems processing personal data.
+    | privacy_lawful_basis_documented
+    | privacy_data_retention_recorded
+    -- AMEND v2 (A3): §5.4 Agentic AI controls. The trace log captures
+    -- every consequential action the agent takes, the surrounding
+    -- context, the model version that took it, and (where present)
+    -- the human reviewer who substantiated it. Required for any
+    -- AISystem with is_agentic = true.
+    | agent_action_trace_log
+}
+
+-- FINOS AIR Governance Framework risk identifiers, as adopted by the firm.
+-- The hyphens require backtick-quoted literals.
+enum FINOSRiskID {
+    `AIR-OP-004`        -- Hallucination and Inaccurate Outputs
+    | `AIR-OP-014`      -- Inadequate System Alignment
+    | `AIR-OP-016`      -- Bias and Discrimination
+    | `AIR-OP-017`      -- Lack of Explainability
+    | `AIR-OP-018`      -- Model Overreach / Expanded Use
+    | `AIR-RC-022`      -- Regulatory Compliance and Oversight
+}
+
+-- Finding categorisation vocabulary. ReviewerFindings carry one of
+-- these categories. Slice A owns the vocabulary because the policy
+-- defines what kinds of finding the review may raise; Slice B owns
+-- the rules that actually raise them.
+enum FindingCategory {
+    tier_misclassification
+    | missing_control
+    | hitl_design
+    | reg_bi_obligation
+    | precedent
+    -- AMEND v2 (A1/A3): agentic-specific finding categories.
+    | agentic_trace_gap
+    | agentic_hitl_design
+    -- AMEND v2 (A4): model substitution found without ledger entry.
+    | model_version_unrecorded
+    -- AMEND v2 (A5): material incident not reported on the schedule.
+    | material_incident_reporting
+}
+
+enum FindingSeverity {
+    blocking | conditional | advisory
+}
+
+-- AMEND v2 (A5): material incident classification, per §10.
+enum IncidentClass {
+    operational     -- service availability, latency, throughput
+    | policy        -- breach of an internal control or asserted HITL
+    | regulatory    -- breach of an external obligation (Reg BI,
+                    -- fair lending, privacy, FINRA)
+    | safety        -- harm or near-miss to a client or counterparty
+}
+
+-- AMEND v2 (A5): three-band materiality.
+enum IncidentSeverity {
+    minor | material | severe
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    -- Number of clients within a 12-month horizon at or above which a
+    -- System counts as "broad-population" for tiering purposes.
+    -- See Open Question OQ-Population-Scope.
+    broad_population_threshold: Integer = 5000
+
+    -- Expected reviewer time-per-output (seconds) below which an HITL
+    -- arrangement is treated as non-substantive review.
+    -- See Open Question OQ-Hitl-Minimum-Time.
+    minimum_review_seconds: Integer = 15
+
+    -- AMEND v2 (A5): §10 reporting clock to the AI Governance Office,
+    -- in seconds, measured from incident occurrence. Beyond this the
+    -- incident is deemed to have breached the prompt-reporting
+    -- obligation.
+    office_report_clock_seconds: Integer = 86400
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- The AI System being assessed. Holds the attributes that drive
+-- classification under LIWP-POL-AI-001 §4.
+entity AISystem {
+    name: String
+    business_sponsor: String         -- name/role of the sponsor
+    technical_owner: String          -- name/role of the technical owner
+    vendor_or_model: String
+
+    -- §4.1 factors
+    is_customer_facing: Boolean
+    makes_consequential_recommendations: Boolean
+    population_scope_twelve_months: Integer
+    regulatory_domain: RegulatoryDomain
+    finos_risks_engaged: Set<FINOSRiskID>
+
+    -- AMEND v2 (A1): §4.1(f). The system is "agentic" when it can
+    -- chain tool calls, take consequential actions in external
+    -- systems (place orders, send communications, write to
+    -- authoritative stores), or otherwise act over multiple steps
+    -- with limited per-step human substantiation. Agentic systems
+    -- engage AIR-OP-018 (Model Overreach) by default and trigger
+    -- §5.4 controls regardless of tier.
+    is_agentic: Boolean
+
+    -- §4.2 default classification flag — true for back-office systems
+    -- with no client outcome effect (presumed Low absent factors to
+    -- the contrary).
+    is_pure_back_office: Boolean
+
+    -- AMEND v2 (A4): inverse relation to the model version ledger.
+    -- Every substitution that affected this system is recorded here.
+    model_history: ModelVersionLedgerEntry with system = this
+
+    -- AMEND v2 (A5): inverse relation to material incidents
+    -- recorded against this system.
+    incidents: MaterialIncident with system = this
+
+    -- Derived
+    is_broad_population: population_scope_twelve_months >= config.broad_population_threshold
+    engages_material_finos_risks: finos_risks_engaged.count >= 2
+}
+
+-- The HITL arrangement described in a submission. The policy's §8
+-- requires more than a passive-review claim.
+entity HITLArrangement {
+    submission: AIDeploymentSubmission
+
+    -- §8: reviewer's role permits informed judgment about output substance.
+    reviewer_qualified: Boolean
+
+    -- §8: reviewer must take an explicit affirmative action to send or
+    -- apply the AI output. The "for the avoidance of doubt" clause
+    -- excludes arrangements where the AI output is the operational
+    -- default and the human role is choosing not to override.
+    requires_affirmative_action: Boolean
+
+    -- §8: time available for review (seconds).
+    expected_review_seconds: Integer
+
+    -- §8: what the reviewer sees alongside the AI output.
+    information_at_review_described: Boolean
+
+    -- AMEND v2 (A2): §8 extended for multi-step systems. An agentic
+    -- system can take several consequential actions per task (e.g.
+    -- look up data, draft a recommendation, place a transfer, send
+    -- a confirmation). Substantiveness must be modelled for every
+    -- class of action the agent can take, not just the final output.
+    --
+    -- total_action_classes: the count of distinct consequential
+    -- action types the agent can perform under this arrangement.
+    -- reviewed_action_classes: the count of those for which an
+    -- affirmative-action review step is defined.
+    total_action_classes: Integer
+    reviewed_action_classes: Integer
+
+    -- Derived: every consequential action class carries an
+    -- affirmative-action review step.
+    is_per_action_substantive:
+        total_action_classes > 0
+        and reviewed_action_classes = total_action_classes
+
+    -- Derived: meets the policy's §8 standard. For agentic systems
+    -- (submission.system.is_agentic) the per-action substantiveness
+    -- test applies in addition to the §8.1 single-output test.
+    is_substantive:
+        reviewer_qualified
+        and requires_affirmative_action
+        and expected_review_seconds >= config.minimum_review_seconds
+        and information_at_review_described
+        and (
+            not submission.system.is_agentic
+            or is_per_action_substantive
+        )
+}
+
+-- The AI system's compliance posture: the tier the firm has assigned
+-- it and the set of controls the system asserts it has in place.
+-- Slice A models this as a static artefact; Slice B (the review
+-- tool) layers submission lifecycle, status transitions and findings
+-- on top.
+entity AIDeploymentSubmission {
+    system: AISystem
+    submitted_by: String             -- name/role of the submitter
+    submitted_at: Timestamp
+
+    -- §4: a proposed tier from the submitter and the authoritative
+    -- tier assigned by the AI Governance Office. The audit reads the
+    -- assigned tier; if absent, no tier-keyed control invariants fire.
+    proposed_tier: RiskTier?
+    assigned_tier: RiskTier?
+
+    -- The controls the submitter asserts are in place. The §5 and §7
+    -- invariants below check this set against tier and domain.
+    asserted_controls: Set<ControlRequirement>
+
+    -- One-to-one (when present): the HITL arrangement claimed. The §8
+    -- invariants below check substantiveness.
+    hitl: HITLArrangement with submission = this
+
+    -- Findings raised against this submission. The vocabulary
+    -- (FindingCategory, FindingSeverity, ReviewerFinding) is defined
+    -- in this file; the rules that *create* findings live in Slice B,
+    -- as part of the review process.
+    findings: ReviewerFinding with submission = this
+
+    -- §6 lifecycle. The status field and its transition graph live
+    -- here because they are structurally part of the submission, but
+    -- the rules that flip status (Approve, Reject, etc.) live in
+    -- Slice B — only the firm's review tooling drives those edges.
+    status: pending_review | conditional_approval | approved | rejected | withdrawn
+
+    -- §6: when the submitter justifies departing from precedent
+    -- conditions because of materially differing circumstances, this
+    -- flag captures that the justification has been documented.
+    -- Slice B's PrecedentConditionsCarryForward invariant reads it.
+    precedent_override_documented: Boolean
+
+    transitions status {
+        pending_review -> conditional_approval
+        pending_review -> approved
+        pending_review -> rejected
+        pending_review -> withdrawn
+        conditional_approval -> approved
+        conditional_approval -> rejected
+        terminal: approved, rejected, withdrawn
+    }
+}
+
+-- A finding raised by the reviewer (or proposed by the AI copilot
+-- for the reviewer to consider). The vocabulary lives here in Slice
+-- A because the policy defines what categories and severities are
+-- valid; the rules that actually raise findings live in Slice B.
+entity ReviewerFinding {
+    submission: AIDeploymentSubmission
+    category: FindingCategory
+    severity: FindingSeverity
+    citation: PolicyCitation
+    summary: String
+    raised_at: Timestamp
+}
+
+-- AMEND v2 (A4): §6 extended. Every model or vendor substitution
+-- affecting an in-flight or registered deployment must be recorded
+-- in the Model Version Ledger. The ledger is what the AI Governance
+-- Office uses to decide whether a substitution triggers re-review
+-- (FINOS AIR-RC-022). This closes OQ-Vendor-Change in v1.
+entity ModelVersionLedgerEntry {
+    system: AISystem
+    vendor: String                   -- e.g. "Azure OpenAI", "Anthropic"
+    model_identifier: String         -- e.g. "gpt-4o-2024-08", "claude-sonnet-4-6"
+    effective_at: Timestamp          -- when this version began serving
+    superseded_at: Timestamp?        -- when it was replaced (null = current)
+    recorded_by: String              -- name/role of the technical owner
+    substantive_change: Boolean      -- vendor's release notes flag this
+                                     -- as more than a routine patch
+}
+
+-- AMEND v2 (A5): §10 extended. A MaterialIncident is the artefact
+-- created when an AI System produces an outcome that requires
+-- reporting to the AI Governance Office and (for Medium/High tiers)
+-- to the AI Governance Committee. Classification drives the
+-- reporting clock. This closes OQ-Material-Incident-Reporting.
+entity MaterialIncident {
+    system: AISystem
+    classification: IncidentClass
+    severity: IncidentSeverity
+    occurred_at: Timestamp
+    reported_to_office_at: Timestamp?
+    reported_to_committee_at: Timestamp?
+    summary: String
+    citation: PolicyCitation
+
+    -- Derived: officed (i.e. reported to the Governance Office) yet.
+    reported_to_office: reported_to_office_at != null
+
+    -- Derived: committee reporting is required when the system's
+    -- assigned tier is Medium or High and the incident is at least
+    -- material. The reporting clock for the committee runs until
+    -- the next scheduled committee meeting (§10.2).
+    requires_committee_report:
+        severity in {material, severe}
+        and DeploymentRegisterEntries.any(e =>
+            e.submission.system = system
+            and e.submission.assigned_tier in {medium, high}
+        )
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+-- §5.1: every Low (or higher) tier submission must assert the Low controls.
+-- Stated separately so the rules of §5 can be inspected one tier at a time.
+invariant LowControlsRequired {
+    for s in AIDeploymentSubmissions:
+        s.assigned_tier != null implies (
+            documented_purpose in s.asserted_controls
+            and model_card in s.asserted_controls
+            and inclusion_in_deployment_register in s.asserted_controls
+            and basic_monitoring in s.asserted_controls
+        )
+}
+
+-- §5.2: every Medium (or High) tier submission must assert the Medium
+-- controls in addition. Domain mapping required only when a domain
+-- applies (§7).
+invariant MediumControlsRequired {
+    for s in AIDeploymentSubmissions:
+        s.assigned_tier in {medium, high} implies (
+            pre_launch_internal_review in s.asserted_controls
+            and defined_hitl in s.asserted_controls
+            and monitoring_plan_pre_launch in s.asserted_controls
+            and training_data_provenance in s.asserted_controls
+            and (
+                s.system.regulatory_domain = none
+                or domain_obligation_mapping in s.asserted_controls
+            )
+        )
+}
+
+-- §5.3: High tier adds independent validation, red-team rotation,
+-- incident runbook, citations on customer-facing outputs, and
+-- AI Governance Committee approval.
+invariant HighControlsRequired {
+    for s in AIDeploymentSubmissions:
+        s.assigned_tier = high implies (
+            independent_validation_by_mrm in s.asserted_controls
+            and pre_launch_red_team in s.asserted_controls
+            and incident_response_runbook in s.asserted_controls
+            and continuous_red_team_rotation in s.asserted_controls
+            and governance_committee_approval in s.asserted_controls
+            and (
+                not s.system.is_customer_facing
+                or output_citations_traceability in s.asserted_controls
+            )
+        )
+}
+
+-- §8: an HITL claim must come with a substantive arrangement.
+invariant HITLClaimsMustBeSubstantive {
+    for s in AIDeploymentSubmissions:
+        defined_hitl in s.asserted_controls implies (
+            exists s.hitl and s.hitl.is_substantive
+        )
+}
+
+-- §7.1: customer-facing advice systems must carry the firm's Reg BI
+-- surfaces in their outputs. The Care Obligation is satisfied by a
+-- demonstrable workflow surface for each obligation; the spec uses
+-- one ControlRequirement per surface.
+invariant RegBIObligationsRequired {
+    for s in AIDeploymentSubmissions:
+        (
+            s.system.regulatory_domain = advice
+            and s.system.is_customer_facing
+        ) implies (
+            reg_bi_fee_comparison_surface in s.asserted_controls
+            and reg_bi_account_type_comparison_surface in s.asserted_controls
+            and reg_bi_suitability_analysis_surface in s.asserted_controls
+            and reg_bi_nua_treatment_surface in s.asserted_controls
+            and reg_bi_conflict_disclosure_surface in s.asserted_controls
+        )
+}
+
+-- §7.2: credit and lending systems must carry the firm's fair-lending
+-- analysis. Bias and discrimination is FINOS AIR-OP-016.
+invariant FairLendingRequired {
+    for s in AIDeploymentSubmissions:
+        s.system.regulatory_domain = credit implies (
+            fair_lending_disparate_impact_analysis in s.asserted_controls
+        )
+}
+
+-- §7.3: privacy obligations for systems processing personal data.
+invariant PrivacyObligationsRequired {
+    for s in AIDeploymentSubmissions:
+        s.system.regulatory_domain = privacy implies (
+            privacy_lawful_basis_documented in s.asserted_controls
+            and privacy_data_retention_recorded in s.asserted_controls
+        )
+}
+
+-- AMEND v2 (A3): §5.4. Every agentic system asserts the trace-log
+-- control. Without it the firm cannot substantiate per-action HITL
+-- or reconstruct the agent's chain of consequential actions after
+-- the fact (FINOS AIR-OP-018, AIR-RC-022).
+invariant AgenticSystemsRequireTraceLog {
+    for s in AIDeploymentSubmissions:
+        s.system.is_agentic implies (
+            agent_action_trace_log in s.asserted_controls
+        )
+}
+
+-- AMEND v2 (A2): §8.2. An agentic HITL claim requires per-action
+-- substantiveness — not just final-output review.
+invariant AgenticHITLRequiresPerActionReview {
+    for s in AIDeploymentSubmissions:
+        (s.system.is_agentic and defined_hitl in s.asserted_controls) implies (
+            exists s.hitl and s.hitl.is_per_action_substantive
+        )
+}
+
+-- AMEND v2 (A4): §6.4. Every AI system must maintain a Model
+-- Version Ledger — at least one entry per system describing the
+-- model it has operated under. Restated from a per-system
+-- perspective (Slice A); the review tool layers the per-register-
+-- entry check in Slice B.
+invariant AISystemsMaintainModelLedger {
+    for s in AISystems:
+        ModelVersionLedgerEntries.any(le => le.system = s)
+}
+
+-- AMEND v2 (A5): §10.1. A material or severe incident must be
+-- reported to the AI Governance Office within the reporting clock.
+invariant MaterialIncidentsReportedPromptly {
+    for i in MaterialIncidents:
+        i.severity in {material, severe} implies (
+            i.reported_to_office
+            and i.reported_to_office_at - i.occurred_at
+                <= config.office_report_clock_seconds
+        )
+}
+
+-- AMEND v2 (A5): §10.2. A material or severe incident on a Medium
+-- or High tier system must be reported to the AI Governance
+-- Committee.
+invariant MaterialIncidentsOnTieredSystemsReportedToCommittee {
+    for i in MaterialIncidents:
+        i.requires_committee_report implies (
+            i.reported_to_committee_at != null
+        )
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open question "OQ-Population-Scope: Does population scope alone (without customer-facing or consequential recommendation factors) escalate above Low? §4.1(d) lists it as a factor but the §4.2 defaults are silent on this case. v1 says yes via ClassifyMedium; needs confirmation from the AI Governance Office."
+
+open question "OQ-Monitoring-Deferral: §10 says monitoring is 'a baseline requirement for production AI Systems' and one sentence later says monitoring 'may be deferred at the discretion of the AI Governance Office' for Low-tier systems with limited population scope. The spec requires basic_monitoring at Low tier without a deferral path. Which reading governs?"
+
+open question "OQ-Equivalent-Assurance: §5.3 permits 'an alternative continuous evaluation arrangement that the AI Governance Office determines provides equivalent assurance' as a substitute for quarterly red-team rotation. v1 requires continuous_red_team_rotation outright. What evidence and decision process establishes 'equivalent assurance'?"
+
+-- AMEND v2 (A4): OQ-Vendor-Change is partly closed. The ledger
+-- entity now records every substitution; a future revision should
+-- encode the threshold above which substantive_change triggers
+-- re-review (FINRA 2025 calls out vendor or foundation-model
+-- substitution explicitly).
+open question "OQ-Vendor-Change-Threshold: ModelVersionLedger now records substitutions, but the threshold at which substantive_change forces a fresh AIDeploymentSubmission review is not defined. Candidate: any substantive_change on a Medium or High tier system. Needs the AI Governance Office to set the rule."
+
+open question "OQ-Hitl-Minimum-Time: config.minimum_review_seconds is a placeholder. §8 references 'time available for review' as a factor in HITL substantiveness but does not set a threshold. What time floor (if any) does the AI Governance Office set for advice-domain systems?"
+
+open question "OQ-Default-Presumption-Override: §4.2 says the reviewer 'may depart from the presumption with documented rationale'. The classification rules in v1 do not model the override path. How is a documented rationale captured and what changes about the review?"
+
+open question "OQ-Annex-A: §5 references 'Annex A — AI Control Standards' for the detailed description of each control. Annex A is reserved in the prose policy. The spec uses the bare control names from §5 as the ControlRequirement vocabulary; details should be added once Annex A exists."
+
+open question "OQ-Domain-Mapping-Granularity: §5.2 requires 'domain-specific obligation mapping per §7 where applicable'. The spec satisfies this with the boolean control domain_obligation_mapping. A future revision should encode the mapping per domain (advice vs credit vs privacy) rather than a single tick-box."
+
+open question "OQ-Exception-Path: §9 permits the AI Governance Committee to grant exceptions to §5 requirements on the basis of documented business case, mitigating controls and re-review date. The spec does not model the Exception entity, the carry-forward of mitigating controls or the re-review clock. Adding this would require an Exception entity scoped to a submission, with a status transition graph for re-review."
+
+-- AMEND v2 (A5): OQ-Material-Incident-Reporting is closed by the
+-- MaterialIncident entity, the IncidentClass / IncidentSeverity
+-- enums, and the MaterialIncidentsReportedPromptly /
+-- MaterialIncidentsOnTieredSystemsReportedToCommittee invariants.
+
+-- AMEND v2 (A1): a new open question raised by the agentic-AI
+-- amendments.
+open question "OQ-Agentic-Tier-Floor: the v2 amendments require trace logs and per-action HITL for any is_agentic system, but do not raise the tier floor for agentic systems. FINRA's 2025 report suggests agentic systems acting on customer-facing surfaces should be treated as High by default. Pending guidance from the AI Governance Office."
+

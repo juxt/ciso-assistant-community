@@ -63,6 +63,26 @@ POLICIES = [
 ]
 
 
+# Records (deployment submissions, post-incident reports, etc.) carried into
+# CISO Assistant as RECORD-type ManagedDocuments rather than Policies. They
+# are not the firm's policies — they are the artefacts the firm reviews
+# against the policies. Indexed the same way (the signal acts on any
+# PUBLISHED DocumentRevision) so the chat can retrieve them.
+RECORDS = [
+    {
+        "name": "Meridian AI Scenario Advisor v1.0 — AI Deployment Submission",
+        "file": "meridian-ai-advisor-submission.md",
+        "description": (
+            "Risk-Division submission lodging the Meridian AI Scenario Advisor "
+            "(internal codename Lighthouse) for second-line review. Proposed "
+            "tier Medium. Used as the worked example in the wealth-firm AI "
+            "governance demo."
+        ),
+        "initial_status": "published",
+    },
+]
+
+
 class Command(BaseCommand):
     help = (
         "Bootstrap the wealth-firm demo: Folder + two Policies with published "
@@ -97,6 +117,9 @@ class Command(BaseCommand):
 
         for spec in POLICIES:
             self._setup_policy(folder, spec)
+
+        for spec in RECORDS:
+            self._setup_record(folder, spec)
 
         self._configure_chat_settings()
 
@@ -185,6 +208,84 @@ class Command(BaseCommand):
         )
 
         # If a revision already exists with matching content and status, no-op.
+        if (
+            latest_any
+            and latest_any.content.strip() == content.strip()
+            and latest_any.status == target_status
+        ):
+            self.stdout.write(
+                f"           revision v{latest_any.version_number} "
+                f"({target_status_str}) unchanged"
+            )
+            return
+
+        next_version = (latest_any.version_number + 1) if latest_any else 1
+        DocumentRevision.objects.create(
+            folder=folder,
+            document=managed_doc,
+            version_number=next_version,
+            content=content,
+            status=target_status,
+        )
+        if target_status == DocumentRevision.Status.PUBLISHED:
+            tail = "indexing queued"
+            verb = "published"
+        else:
+            tail = "not indexed (Draft)"
+            verb = "saved as draft"
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"           {verb} revision v{next_version} "
+                f"({len(content):,} chars) — {tail}"
+            )
+        )
+
+    def _setup_record(self, folder, spec):
+        """
+        Create or refresh a RECORD-type ManagedDocument that is not backed by
+        a Policy. The chat signal patch indexes any PUBLISHED DocumentRevision
+        regardless of the parent document_type, so records flow into RAG the
+        same way policies do.
+
+        Records have no Policy parent — the firm reviews submissions against
+        its policies; the submission itself is not a policy.
+        """
+        from doc_management.models import DocumentRevision, ManagedDocument
+
+        name = spec["name"]
+        content_path = DEMO_CONTENT_DIR / spec["file"]
+        if not content_path.exists():
+            self.stderr.write(
+                self.style.ERROR(f"missing demo content file: {content_path}")
+            )
+            return
+        content = content_path.read_text(encoding="utf-8")
+
+        managed_doc, d_created = ManagedDocument.objects.get_or_create(
+            folder=folder,
+            name=name,
+            policy=None,
+            defaults={
+                "document_type": ManagedDocument.DocumentType.RECORD,
+                "description": spec.get("description", ""),
+            },
+        )
+        prefix = self.style.SUCCESS("created") if d_created else "exists "
+        self.stdout.write(f"{prefix}  record: {name}")
+
+        target_status_str = spec.get("initial_status", "published")
+        target_status = (
+            DocumentRevision.Status.DRAFT
+            if target_status_str == "draft"
+            else DocumentRevision.Status.PUBLISHED
+        )
+
+        latest_any = (
+            DocumentRevision.objects.filter(document=managed_doc)
+            .order_by("-version_number")
+            .first()
+        )
+
         if (
             latest_any
             and latest_any.content.strip() == content.strip()

@@ -10,6 +10,10 @@ services:
       # firm-policy chunks always included, we need a much larger budget.
       # Claude Opus 4.7 has a 200k context window so this is comfortably safe.
       - CHAT_RAG_CONTEXT_TOKENS=20000
+      # Composed system prompt (TOOL_SYSTEM_PROMPT + Allium primer) plus
+      # spec-rich responses push exchanges past the upstream 100s gunicorn
+      # timeout. Bump to 240s; startup.sh reads GUNICORN_TIMEOUT directly.
+      - GUNICORN_TIMEOUT=240
     volumes:
       # Overlay patched chat module files — see patches/README for rationale
       - ./patches/knowledge_graph.py:/code/chat/knowledge_graph.py:ro
@@ -17,12 +21,17 @@ services:
       - ./patches/signals.py:/code/chat/signals.py:ro
       - ./patches/extractors.py:/code/chat/extractors.py:ro
       - ./patches/rag.py:/code/chat/rag.py:ro
+      - ./patches/providers.py:/code/chat/providers.py:ro
       # Demo bootstrap: management command + content source-of-truth markdown
       - ./demo-content/setup_demo.py:/code/chat/management/commands/setup_demo.py:ro
       - ./patches/verify_demo.py:/code/chat/management/commands/verify_demo.py:ro
       - ./patches/allium_toggle_enable.py:/code/chat/management/commands/enable_allium.py:ro
       - ./patches/allium_toggle_disable.py:/code/chat/management/commands/disable_allium.py:ro
+      - ./patches/import_audit_findings.py:/code/chat/management/commands/import_audit_findings.py:ro
       - ./demo-content:/code/demo-content:ro
+      # Swarm audit output (host path). Read-only — the swarm writes here;
+      # the import_audit_findings command reads from it.
+      - /tmp/allium-swarm-too/audit:/code/audit-output:ro
 
   huey:
     image: ghcr.io/intuitem/ciso-assistant-community/backend@sha256:5cdf2dd356495ba4101633cd6e2e6be43af99ddcd054fb28d0eee4d88bb4d0cf
@@ -35,6 +44,7 @@ services:
       - ./patches/signals.py:/code/chat/signals.py:ro
       - ./patches/extractors.py:/code/chat/extractors.py:ro
       - ./patches/rag.py:/code/chat/rag.py:ro
+      - ./patches/providers.py:/code/chat/providers.py:ro
       - ./demo-content/setup_demo.py:/code/chat/management/commands/setup_demo.py:ro
       - ./demo-content:/code/demo-content:ro
 

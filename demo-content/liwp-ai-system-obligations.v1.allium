@@ -1,0 +1,357 @@
+-- allium: 3
+-- liwp-ai-system-obligations.v1.allium
+--
+-- Lorem Ipsum Wealth Partners — AI Governance Policy, executable form.
+--
+-- Slice A of LIWP-POL-AI-001 (v1, pre-amendment). This file captures
+-- the obligations the policy places on AI systems being deployed by
+-- the firm: the entities a system must model, the controls it must
+-- assert, the invariants its compliance posture must satisfy. This
+-- is the file consumed by the firm's compliance audit tooling.
+--
+-- The companion file liwp-review-tool.v1.allium (Slice B) describes
+-- the AI Governance Office's review process: submissions lifecycle,
+-- reviewer surfaces, the deployment register, and the AI copilot.
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value PolicyCitation {
+    document_ref: String        -- e.g. "LIWP-POL-AI-001"
+    section: String             -- e.g. "§4.1(b)"
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum RiskTier {
+    low | medium | high
+}
+
+enum RegulatoryDomain {
+    advice           -- §7.1: client recommendations
+    | credit         -- §7.2: credit and lending decisions
+    | privacy        -- §7.3: personal data processing
+    | none
+}
+
+-- The vocabulary of controls the policy refers to. Names mirror §5.
+enum ControlRequirement {
+    -- Low and above (§5.1)
+    documented_purpose
+    | model_card
+    | inclusion_in_deployment_register
+    | basic_monitoring
+    -- Medium and above (§5.2)
+    | pre_launch_internal_review
+    | defined_hitl
+    | monitoring_plan_pre_launch
+    | training_data_provenance
+    | domain_obligation_mapping
+    -- High only (§5.3)
+    | independent_validation_by_mrm
+    | pre_launch_red_team
+    | incident_response_runbook
+    | continuous_red_team_rotation
+    | output_citations_traceability
+    | governance_committee_approval
+    -- Domain-specific (§7.1): Reg BI obligations for customer-facing
+    -- advice systems. The Care Obligation (§240.15l-1(a)(2)(ii)) requires
+    -- the firm to have a reasonable basis to believe a recommendation is
+    -- in the retail customer's best interest. For AI-drafted client
+    -- communications, the firm satisfies this through documented surfaces
+    -- in the recommendation workflow.
+    | reg_bi_fee_comparison_surface
+    | reg_bi_account_type_comparison_surface
+    | reg_bi_suitability_analysis_surface
+    | reg_bi_nua_treatment_surface
+    | reg_bi_conflict_disclosure_surface
+    -- §7.2: Fair lending obligations for credit/lending systems.
+    | fair_lending_disparate_impact_analysis
+    -- §7.3: Privacy obligations for systems processing personal data.
+    | privacy_lawful_basis_documented
+    | privacy_data_retention_recorded
+}
+
+-- FINOS AIR Governance Framework risk identifiers, as adopted by the firm.
+-- The hyphens require backtick-quoted literals.
+enum FINOSRiskID {
+    `AIR-OP-004`        -- Hallucination and Inaccurate Outputs
+    | `AIR-OP-014`      -- Inadequate System Alignment
+    | `AIR-OP-016`      -- Bias and Discrimination
+    | `AIR-OP-017`      -- Lack of Explainability
+    | `AIR-OP-018`      -- Model Overreach / Expanded Use
+    | `AIR-RC-022`      -- Regulatory Compliance and Oversight
+}
+
+enum FindingCategory {
+    tier_misclassification
+    | missing_control
+    | hitl_design
+    | reg_bi_obligation
+    | precedent
+}
+
+enum FindingSeverity {
+    blocking | conditional | advisory
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    -- Number of clients within a 12-month horizon at or above which a
+    -- System counts as "broad-population" for tiering purposes.
+    -- See Open Question OQ-Population-Scope.
+    broad_population_threshold: Integer = 5000
+
+    -- Expected reviewer time-per-output (seconds) below which an HITL
+    -- arrangement is treated as non-substantive review.
+    -- See Open Question OQ-Hitl-Minimum-Time.
+    minimum_review_seconds: Integer = 15
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- The AI System being assessed. Holds the attributes that drive
+-- classification under LIWP-POL-AI-001 §4.
+entity AISystem {
+    name: String
+    business_sponsor: String         -- name/role of the sponsor
+    technical_owner: String          -- name/role of the technical owner
+    vendor_or_model: String
+
+    -- §4.1 factors
+    is_customer_facing: Boolean
+    makes_consequential_recommendations: Boolean
+    population_scope_twelve_months: Integer
+    regulatory_domain: RegulatoryDomain
+    finos_risks_engaged: Set<FINOSRiskID>
+
+    -- §4.2 default classification flag — true for back-office systems
+    -- with no client outcome effect (presumed Low absent factors to
+    -- the contrary).
+    is_pure_back_office: Boolean
+
+    -- Derived
+    is_broad_population: population_scope_twelve_months >= config.broad_population_threshold
+    engages_material_finos_risks: finos_risks_engaged.count >= 2
+}
+
+-- The HITL arrangement described in a submission. The policy's §8
+-- requires more than a passive-review claim.
+entity HITLArrangement {
+    submission: AIDeploymentSubmission
+
+    -- §8: reviewer's role permits informed judgment about output substance.
+    reviewer_qualified: Boolean
+
+    -- §8: reviewer must take an explicit affirmative action to send or
+    -- apply the AI output. The "for the avoidance of doubt" clause
+    -- excludes arrangements where the AI output is the operational
+    -- default and the human role is choosing not to override.
+    requires_affirmative_action: Boolean
+
+    -- §8: time available for review (seconds).
+    expected_review_seconds: Integer
+
+    -- §8: what the reviewer sees alongside the AI output.
+    information_at_review_described: Boolean
+
+    -- Derived: meets the policy's §8 standard.
+    is_substantive:
+        reviewer_qualified
+        and requires_affirmative_action
+        and expected_review_seconds >= config.minimum_review_seconds
+        and information_at_review_described
+}
+
+-- The deployment submission lodged by a Business Sponsor and reviewed
+-- by the AI Governance Office (Second Line).
+entity AIDeploymentSubmission {
+    system: AISystem
+    submitted_by: String             -- name/role of the submitter
+    submitted_at: Timestamp
+
+    -- §6 lifecycle
+    status: pending_review | conditional_approval | approved | rejected | withdrawn
+
+    -- §4: a proposed tier from the submitter. The Office's assignment
+    -- in `assigned_tier` is the authoritative value.
+    proposed_tier: RiskTier?
+
+    -- Set by the AI Governance Office during review.
+    assigned_tier: RiskTier?
+
+    -- The controls the submitter asserts are in place. Compared against
+    -- the tier's required set in invariants below.
+    asserted_controls: Set<ControlRequirement>
+
+    -- One-to-one (when present): the HITL arrangement claimed.
+    hitl: HITLArrangement with submission = this
+
+    -- Findings raised during review (zero or more).
+    findings: ReviewerFinding with submission = this
+
+    -- §6: when the submitter justifies departing from precedent
+    -- conditions because of materially differing circumstances, this
+    -- flag captures that the justification has been documented.
+    -- Without it, precedent conditions are required.
+    precedent_override_documented: Boolean
+
+    -- Derived
+    open_findings: findings where severity in {blocking, conditional}
+    has_open_blocking_findings: findings.any(f => f.severity = blocking)
+
+    -- §6: comparability with prior approvals is asserted via the
+    -- PrecedentConditionsCarryForward invariant below. Two submissions
+    -- are comparable when they share regulatory_domain, customer-facing
+    -- posture and assigned_tier.
+
+    transitions status {
+        pending_review -> conditional_approval
+        pending_review -> approved
+        pending_review -> rejected
+        pending_review -> withdrawn
+        conditional_approval -> approved
+        conditional_approval -> rejected
+        terminal: approved, rejected, withdrawn
+    }
+}
+
+-- A finding raised by the reviewer (or proposed by the copilot for the
+-- reviewer to consider). Findings are the artefact of review.
+entity ReviewerFinding {
+    submission: AIDeploymentSubmission
+    category: FindingCategory
+    severity: FindingSeverity
+    citation: PolicyCitation
+    summary: String
+    raised_at: Timestamp
+}
+
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+-- §5.1: every Low (or higher) tier submission must assert the Low controls.
+-- Stated separately so the rules of §5 can be inspected one tier at a time.
+invariant LowControlsRequired {
+    for s in AIDeploymentSubmissions:
+        s.assigned_tier != null implies (
+            documented_purpose in s.asserted_controls
+            and model_card in s.asserted_controls
+            and inclusion_in_deployment_register in s.asserted_controls
+            and basic_monitoring in s.asserted_controls
+        )
+}
+
+-- §5.2: every Medium (or High) tier submission must assert the Medium
+-- controls in addition. Domain mapping required only when a domain
+-- applies (§7).
+invariant MediumControlsRequired {
+    for s in AIDeploymentSubmissions:
+        s.assigned_tier in {medium, high} implies (
+            pre_launch_internal_review in s.asserted_controls
+            and defined_hitl in s.asserted_controls
+            and monitoring_plan_pre_launch in s.asserted_controls
+            and training_data_provenance in s.asserted_controls
+            and (
+                s.system.regulatory_domain = none
+                or domain_obligation_mapping in s.asserted_controls
+            )
+        )
+}
+
+-- §5.3: High tier adds independent validation, red-team rotation,
+-- incident runbook, citations on customer-facing outputs, and
+-- AI Governance Committee approval.
+invariant HighControlsRequired {
+    for s in AIDeploymentSubmissions:
+        s.assigned_tier = high implies (
+            independent_validation_by_mrm in s.asserted_controls
+            and pre_launch_red_team in s.asserted_controls
+            and incident_response_runbook in s.asserted_controls
+            and continuous_red_team_rotation in s.asserted_controls
+            and governance_committee_approval in s.asserted_controls
+            and (
+                not s.system.is_customer_facing
+                or output_citations_traceability in s.asserted_controls
+            )
+        )
+}
+
+-- §8: an HITL claim must come with a substantive arrangement.
+invariant HITLClaimsMustBeSubstantive {
+    for s in AIDeploymentSubmissions:
+        defined_hitl in s.asserted_controls implies (
+            exists s.hitl and s.hitl.is_substantive
+        )
+}
+
+-- §7.1: customer-facing advice systems must carry the firm's Reg BI
+-- surfaces in their outputs. The Care Obligation is satisfied by a
+-- demonstrable workflow surface for each obligation; the spec uses
+-- one ControlRequirement per surface.
+invariant RegBIObligationsRequired {
+    for s in AIDeploymentSubmissions:
+        (
+            s.system.regulatory_domain = advice
+            and s.system.is_customer_facing
+        ) implies (
+            reg_bi_fee_comparison_surface in s.asserted_controls
+            and reg_bi_account_type_comparison_surface in s.asserted_controls
+            and reg_bi_suitability_analysis_surface in s.asserted_controls
+            and reg_bi_nua_treatment_surface in s.asserted_controls
+            and reg_bi_conflict_disclosure_surface in s.asserted_controls
+        )
+}
+
+-- §7.2: credit and lending systems must carry the firm's fair-lending
+-- analysis. Bias and discrimination is FINOS AIR-OP-016.
+invariant FairLendingRequired {
+    for s in AIDeploymentSubmissions:
+        s.system.regulatory_domain = credit implies (
+            fair_lending_disparate_impact_analysis in s.asserted_controls
+        )
+}
+
+-- §7.3: privacy obligations for systems processing personal data.
+invariant PrivacyObligationsRequired {
+    for s in AIDeploymentSubmissions:
+        s.system.regulatory_domain = privacy implies (
+            privacy_lawful_basis_documented in s.asserted_controls
+            and privacy_data_retention_recorded in s.asserted_controls
+        )
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open question "OQ-Population-Scope: Does population scope alone (without customer-facing or consequential recommendation factors) escalate above Low? §4.1(d) lists it as a factor but the §4.2 defaults are silent on this case. v1 says yes via ClassifyMedium; needs confirmation from the AI Governance Office."
+
+open question "OQ-Monitoring-Deferral: §10 says monitoring is 'a baseline requirement for production AI Systems' and one sentence later says monitoring 'may be deferred at the discretion of the AI Governance Office' for Low-tier systems with limited population scope. The spec requires basic_monitoring at Low tier without a deferral path. Which reading governs?"
+
+open question "OQ-Equivalent-Assurance: §5.3 permits 'an alternative continuous evaluation arrangement that the AI Governance Office determines provides equivalent assurance' as a substitute for quarterly red-team rotation. v1 requires continuous_red_team_rotation outright. What evidence and decision process establishes 'equivalent assurance'?"
+
+open question "OQ-Vendor-Change: FINOS AIR-RC-022 calls out vendor change risk (e.g. Azure OpenAI model versions deprecating). The prose policy does not address vendor or foundation-model substitution explicitly beyond noting §6 applies to 'vendor or model substitutions affecting an in-flight deployment'. What triggers re-review, and at what threshold?"
+
+open question "OQ-Hitl-Minimum-Time: config.minimum_review_seconds is a placeholder. §8 references 'time available for review' as a factor in HITL substantiveness but does not set a threshold. What time floor (if any) does the AI Governance Office set for advice-domain systems?"
+
+open question "OQ-Default-Presumption-Override: §4.2 says the reviewer 'may depart from the presumption with documented rationale'. The classification rules in v1 do not model the override path. How is a documented rationale captured and what changes about the review?"
+
+open question "OQ-Annex-A: §5 references 'Annex A — AI Control Standards' for the detailed description of each control. Annex A is reserved in the prose policy. The spec uses the bare control names from §5 as the ControlRequirement vocabulary; details should be added once Annex A exists."
+
+open question "OQ-Domain-Mapping-Granularity: §5.2 requires 'domain-specific obligation mapping per §7 where applicable'. The spec satisfies this with the boolean control domain_obligation_mapping. A future revision should encode the mapping per domain (advice vs credit vs privacy) rather than a single tick-box."
+
+open question "OQ-Exception-Path: §9 permits the AI Governance Committee to grant exceptions to §5 requirements on the basis of documented business case, mitigating controls and re-review date. The spec does not model the Exception entity, the carry-forward of mitigating controls or the re-review clock. Adding this would require an Exception entity scoped to a submission, with a status transition graph for re-review."
+
+open question "OQ-Material-Incident-Reporting: §10 requires material incidents to be reported promptly to the AI Governance Office and, for Medium and High tier systems, to the AI Governance Committee at the next scheduled meeting. The spec does not model MaterialIncident as an entity, the temporal trigger for the reporting obligation, or what constitutes 'material'."
+
