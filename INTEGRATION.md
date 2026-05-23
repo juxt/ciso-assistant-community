@@ -1,6 +1,8 @@
 # Demo integration — handoff
 
-Wealth-firm AI governance demo, late May 2026. Five-beat flow for senior compliance executives. This document is the handoff from the integration pass; what follows is the state of the system at handoff time, the commands the operator runs in the room, what's still open, and the reasoning behind the decisions taken.
+Wealth-firm AI governance demo, late May 2026. Six-beat flow for senior compliance executives. This document is the handoff from the integration pass; what follows is the state of the system at handoff time, the commands the operator runs in the room, what's still open, and the reasoning behind the decisions taken.
+
+The beat-by-beat narrative — including the framework adaptations (generator/verifier, specifiable/unspecifiable, mechanical/interpretive) — lives in `~/code/ai-compliance-demo/DEMO-SCRIPT.md`. Read that for what happens on stage; read this for the mechanics behind it.
 
 The demo runs across three repos:
 
@@ -89,6 +91,14 @@ docker compose exec backend poetry run python manage.py import_audit_findings --
 ```
 
 Wait ~40s for Huey to index, then Sarah can ask the chat "what did the latest audit find on the Meridian advisor?" and have it retrieve the report by name and cite findings by spec-construct name (`AgenticSystemsRequireTraceLog`, `MaterialIncidentsReportedPromptly`, etc.).
+
+**The reviewer-disposition step (Beat 5):** Each finding renders with `*Reviewer disposition: awaiting review*` by default. To record Sarah's sign-off on a finding — used in the demo to dismiss the Reg BI false positive as the framework's "human signs off the LLM judge's screening" moment — run from `~/code/ai-compliance-demo/allium-swarm`:
+
+```bash
+just demo-audit-disposition advisor RegBIObligationsRequired "Dismissed — advisor is internal-only; Reg BI §240.15l-1 does not apply"
+```
+
+This updates `audit-v2.json` and re-renders `audit-v2.md`. Then re-run `import_audit_findings` in CISO Assistant to publish the new revision; the chat will retrieve the dispositioned report on subsequent queries.
 
 **For rehearsal of just the chat side, without re-running the swarm:**
 
