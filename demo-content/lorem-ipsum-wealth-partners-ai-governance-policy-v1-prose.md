@@ -88,6 +88,12 @@ All Medium tier controls, plus:
 - Citations and source traceability on Customer-Facing outputs (per AIR-DET-013).
 - AI Governance Committee approval prior to deployment.
 
+### 5.5 Stress-testing adequacy for risk-advisory systems
+
+Where an AI System is used to inform risk-management decisions — running scenarios, computing exposures, proposing hedges, or escalating breaches — the Firm shall operate the System against a documented standing scenario set covering the desks' risk profile to a standard of substantive adequacy. The standing set shall, at minimum, cover tail events, correlation breakdown and liquidity stress for the desks served, and shall be reviewed at least annually by a party independent of the desk.
+
+Ad-hoc scenarios constructed or selected outside the standing set are supplementary to it, not a substitute for it. Each ad-hoc scenario shall be reviewed by an independent qualified party before its results inform any consequential action. A scenario methodology trail shall be maintained for every scenario the System runs, recording what selected it, what data and calibration informed it, and the model version under which it was reasoned about.
+
 ## 6. AI deployment lifecycle
 
 All in-scope AI Systems shall follow the deployment lifecycle set out below. The lifecycle applies to net-new deployments, to materially changed existing deployments, and to vendor or model substitutions affecting an in-flight deployment.
@@ -127,6 +133,10 @@ Departures from the requirements of §5 may be approved in writing by the AI Gov
 All in-scope AI Systems shall be subject to ongoing monitoring proportionate to their Risk Tier. Monitoring is a baseline requirement for production AI Systems. Monitoring requirements may be deferred at the discretion of the AI Governance Office for Low tier Systems with limited population scope, with quarterly review thereafter to confirm continued fitness.
 
 Material incidents shall be reported promptly to the AI Governance Office and, for Medium and High tier Systems, to the AI Governance Committee at the next scheduled meeting.
+
+### 10.3 Material breach incidents
+
+Where a stress scenario shows simulated exposure breaching the Firm's defined risk appetite — by P&L, VaR or any other documented threshold — the breach shall be classified by the desk and reported to the Risk Committee within the office-reporting clock applicable to material incidents. Classification shall identify whether the breach is an exceedance of a documented threshold, the realisation of a tail-scenario outcome, or a correlation breakdown in which a hedge failed to hedge. Breaches identified by an AI-assisted risk-advisory System are reportable on the same clock as breaches identified by other means.
 
 ## 11. Review
 
