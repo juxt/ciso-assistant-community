@@ -9,19 +9,23 @@
 -- the copilot.
 --
 -- v2 AMENDMENT (December 2025): adopted in response to the FINRA
--- Regulatory Oversight Report on agentic AI. Five amendments are
--- applied throughout this file, each marked with the comment prefix
+-- Regulatory Oversight Report tightening expectations on the
+-- adequacy of stress testing for AI-assisted risk-management
+-- systems. Five amendments are applied throughout this file, each
+-- marked with the comment prefix
 --   -- AMEND v2:
 -- The amendments are:
---   A1. is_agentic factor added to AISystem (§4.1).
---   A2. HITL substantiveness extended to per-action review for
---       multi-step agentic systems (§8).
---   A3. agent_action_trace_log control added (§5.4, new) and
---       required for is_agentic systems.
---   A4. ModelVersionLedger entity added to capture model and vendor
---       substitutions (§6, closes OQ-Vendor-Change).
---   A5. MaterialIncident entity and classification rules added
---       (§10, closes OQ-Material-Incident-Reporting).
+--   B1. is_risk_advisory factor added to AISystem (§4.1).
+--   B2. StandingScenarioSet entity added with annual review and
+--       coverage obligations (§5.5, new).
+--   B3. ad_hoc_scenario_review control added (§5.5) and required
+--       for is_risk_advisory systems, with a per-scenario review
+--       gate on the HITL arrangement (§8).
+--   B4. ScenarioMethodologyLedger entity added to record what
+--       selected each scenario, the data and calibration used,
+--       and the model version that reasoned about it (§6.5).
+--   B5. MaterialBreachIncident entity and reporting clock added
+--       (§10.3).
 
 ------------------------------------------------------------
 -- External Entities
@@ -89,12 +93,14 @@ enum ControlRequirement {
     -- §7.3: Privacy obligations for systems processing personal data.
     | privacy_lawful_basis_documented
     | privacy_data_retention_recorded
-    -- AMEND v2 (A3): §5.4 Agentic AI controls. The trace log captures
-    -- every consequential action the agent takes, the surrounding
-    -- context, the model version that took it, and (where present)
-    -- the human reviewer who substantiated it. Required for any
-    -- AISystem with is_agentic = true.
-    | agent_action_trace_log
+    -- AMEND v2 (B3): §5.5. When a risk-advisory system constructs
+    -- or selects scenarios outside its standing set, each ad-hoc
+    -- scenario must be reviewed by an independent qualified party
+    -- before its results inform any consequential action.
+    -- Independence excludes the analyst who initiated the session.
+    -- A single end-of-session accept/reject does not satisfy this
+    -- control.
+    | ad_hoc_scenario_review
 }
 
 -- FINOS AIR Governance Framework risk identifiers, as adopted by the firm.
@@ -114,29 +120,32 @@ enum FindingCategory {
     | hitl_design
     | reg_bi_obligation
     | precedent
-    -- AMEND v2 (A1/A3): agentic-specific finding categories.
-    | agentic_trace_gap
-    | agentic_hitl_design
-    -- AMEND v2 (A4): model substitution found without ledger entry.
-    | model_version_unrecorded
-    -- AMEND v2 (A5): material incident not reported on the schedule.
-    | material_incident_reporting
+    -- AMEND v2 (B2/B3): stress-testing-design findings cover both
+    -- missing standing-scenario-set obligations and passive
+    -- ad-hoc-scenario review.
+    | stress_testing_design
+    -- AMEND v2 (B4): scenario run found without a methodology
+    -- ledger entry.
+    | scenario_methodology_gap
+    -- AMEND v2 (B5): material breach not reported on the schedule.
+    | material_breach_reporting
 }
 
 enum FindingSeverity {
     blocking | conditional | advisory
 }
 
--- AMEND v2 (A5): material incident classification, per §10.
-enum IncidentClass {
-    operational     -- service availability, latency, throughput
-    | policy        -- breach of an internal control or asserted HITL
-    | regulatory    -- breach of an external obligation (Reg BI,
-                    -- fair lending, privacy, FINRA)
-    | safety        -- harm or near-miss to a client or counterparty
+-- AMEND v2 (B5): breach classification, per §10.3. A material
+-- breach is identified by what failed about the firm's risk
+-- posture, not by what the AI system did.
+enum BreachClass {
+    exceedance              -- a documented risk-appetite threshold breached
+    | tail_realisation      -- a tail-scenario outcome actually realised
+    | correlation_breakdown -- a correlated hedge failed to hedge
 }
 
--- AMEND v2 (A5): three-band materiality.
+-- AMEND v2 (B5): three-band materiality, retained from the v2
+-- incident framework and reused for MaterialBreachIncident.
 enum IncidentSeverity {
     minor | material | severe
 }
@@ -156,11 +165,16 @@ config {
     -- See Open Question OQ-Hitl-Minimum-Time.
     minimum_review_seconds: Integer = 15
 
-    -- AMEND v2 (A5): §10 reporting clock to the AI Governance Office,
-    -- in seconds, measured from incident occurrence. Beyond this the
-    -- incident is deemed to have breached the prompt-reporting
-    -- obligation.
+    -- AMEND v2 (B5): §10.3 reporting clock to the AI Governance
+    -- Office and Risk Committee, in seconds, measured from the
+    -- breach being identified. Beyond this the firm is deemed to
+    -- have missed the prompt-reporting obligation.
     office_report_clock_seconds: Integer = 86400
+
+    -- AMEND v2 (B2): §5.5 standing scenario set review window.
+    -- A standing set must be reviewed by an independent party at
+    -- least this often (12 months).
+    standing_set_review_window_seconds: Integer = 31536000
 }
 
 ------------------------------------------------------------
@@ -182,27 +196,27 @@ entity AISystem {
     regulatory_domain: RegulatoryDomain
     finos_risks_engaged: Set<FINOSRiskID>
 
-    -- AMEND v2 (A1): §4.1(f). The system is "agentic" when it can
-    -- chain tool calls, take consequential actions in external
-    -- systems (place orders, send communications, write to
-    -- authoritative stores), or otherwise act over multiple steps
-    -- with limited per-step human substantiation. Agentic systems
-    -- engage AIR-OP-018 (Model Overreach) by default and trigger
-    -- §5.4 controls regardless of tier.
-    is_agentic: Boolean
+    -- AMEND v2 (B1): §4.1(g). The system is "risk-advisory" when
+    -- its outputs inform the firm's risk-management decisions —
+    -- running scenarios, computing exposures, proposing hedges,
+    -- escalating breaches. Risk-advisory systems are subject to
+    -- §5.5 stress-testing-adequacy obligations regardless of tier
+    -- and regardless of customer-facing posture.
+    is_risk_advisory: Boolean
 
     -- §4.2 default classification flag — true for back-office systems
     -- with no client outcome effect (presumed Low absent factors to
     -- the contrary).
     is_pure_back_office: Boolean
 
-    -- AMEND v2 (A4): inverse relation to the model version ledger.
-    -- Every substitution that affected this system is recorded here.
-    model_history: ModelVersionLedgerEntry with system = this
+    -- AMEND v2 (B4): inverse relation to the scenario methodology
+    -- ledger. Every scenario the system has run against is
+    -- recorded here.
+    scenario_methodology: ScenarioMethodologyLedgerEntry with system = this
 
-    -- AMEND v2 (A5): inverse relation to material incidents
+    -- AMEND v2 (B5): inverse relation to material breach incidents
     -- recorded against this system.
-    incidents: MaterialIncident with system = this
+    breaches: MaterialBreachIncident with system = this
 
     -- Derived
     is_broad_population: population_scope_twelve_months >= config.broad_population_threshold
@@ -229,37 +243,18 @@ entity HITLArrangement {
     -- §8: what the reviewer sees alongside the AI output.
     information_at_review_described: Boolean
 
-    -- AMEND v2 (A2): §8 extended for multi-step systems. An agentic
-    -- system can take several consequential actions per task (e.g.
-    -- look up data, draft a recommendation, place a transfer, send
-    -- a confirmation). Substantiveness must be modelled for every
-    -- class of action the agent can take, not just the final output.
-    --
-    -- total_action_classes: the count of distinct consequential
-    -- action types the agent can perform under this arrangement.
-    -- reviewed_action_classes: the count of those for which an
-    -- affirmative-action review step is defined.
-    total_action_classes: Integer
-    reviewed_action_classes: Integer
+    -- AMEND v2 (B3): for risk-advisory systems, the HITL
+    -- arrangement must include a per-scenario review gate, not
+    -- only a final-output gate. Without this, ad_hoc_scenario_review
+    -- cannot be truthfully asserted.
+    has_per_scenario_review: Boolean
 
-    -- Derived: every consequential action class carries an
-    -- affirmative-action review step.
-    is_per_action_substantive:
-        total_action_classes > 0
-        and reviewed_action_classes = total_action_classes
-
-    -- Derived: meets the policy's §8 standard. For agentic systems
-    -- (submission.system.is_agentic) the per-action substantiveness
-    -- test applies in addition to the §8.1 single-output test.
+    -- Derived: meets the policy's §8 standard.
     is_substantive:
         reviewer_qualified
         and requires_affirmative_action
         and expected_review_seconds >= config.minimum_review_seconds
         and information_at_review_described
-        and (
-            not submission.system.is_agentic
-            or is_per_action_substantive
-        )
 }
 
 -- The deployment submission lodged by a Business Sponsor and reviewed
@@ -339,30 +334,59 @@ entity DeploymentRegisterEntry {
     conditions: Set<ControlRequirement>
 }
 
--- AMEND v2 (A4): §6 extended. Every model or vendor substitution
--- affecting an in-flight or registered deployment must be recorded
--- in the Model Version Ledger. The ledger is what the AI Governance
--- Office uses to decide whether a substitution triggers re-review
--- (FINOS AIR-RC-022). This closes OQ-Vendor-Change in v1.
-entity ModelVersionLedgerEntry {
+-- AMEND v2 (B2): §5.5. Risk-advisory systems must operate against
+-- a documented standing scenario set covering tail events,
+-- correlation breakdown and liquidity stress for the desks they
+-- serve. Ad-hoc scenarios are supplementary; the standing set is
+-- the baseline. Annual review by an independent party is required.
+entity StandingScenarioSet {
     system: AISystem
-    vendor: String                   -- e.g. "Azure OpenAI", "Anthropic"
-    model_identifier: String         -- e.g. "gpt-4o-2024-08", "claude-sonnet-4-6"
-    effective_at: Timestamp          -- when this version began serving
-    superseded_at: Timestamp?        -- when it was replaced (null = current)
-    recorded_by: String              -- name/role of the technical owner
-    substantive_change: Boolean      -- vendor's release notes flag this
-                                     -- as more than a routine patch
+    last_reviewed_at: Timestamp
+    reviewed_by: String
+    covers_tail_events: Boolean
+    covers_correlation_breakdown: Boolean
+    covers_liquidity_stress: Boolean
+    applicable_desks: Set<String>
+
+    -- Derived: reviewed within the last twelve months.
+    is_current: now - last_reviewed_at <= config.standing_set_review_window_seconds
+
+    -- Derived: covers the three §5.5 dimensions.
+    has_required_coverage:
+        covers_tail_events
+        and covers_correlation_breakdown
+        and covers_liquidity_stress
 }
 
--- AMEND v2 (A5): §10 extended. A MaterialIncident is the artefact
--- created when an AI System produces an outcome that requires
--- reporting to the AI Governance Office and (for Medium/High tiers)
--- to the AI Governance Committee. Classification drives the
--- reporting clock. This closes OQ-Material-Incident-Reporting.
-entity MaterialIncident {
+-- AMEND v2 (B4): §6.5. Every scenario the system runs — whether
+-- from the standing set or constructed ad-hoc — must be recorded
+-- in a Scenario Methodology Ledger. The ledger captures what
+-- selected the scenario (analyst or LLM), what data informed it,
+-- what calibration was used, which model version reasoned about
+-- it, and the independent reviewer who substantiated it (where
+-- applicable). This closes the gap where scenario provenance was
+-- previously carried only in session audit logs that did not
+-- survive restart.
+entity ScenarioMethodologyLedgerEntry {
     system: AISystem
-    classification: IncidentClass
+    scenario_id: String
+    selected_by: String              -- "analyst/<id>" or "llm/<model_version>"
+    calibration_source: String       -- "historical", "implied_vol", etc
+    model_version: String?           -- when LLM-selected
+    reviewed_by: String?             -- independent reviewer, where applicable
+    recorded_at: Timestamp
+    justification: String            -- one-line rationale for selection
+}
+
+-- AMEND v2 (B5): §10.3 extended. A MaterialBreachIncident is the
+-- artefact created when a stress scenario shows simulated exposure
+-- breaching the firm's defined risk appetite — by P&L, VaR or any
+-- other documented threshold. Classification drives the reporting
+-- clock to the AI Governance Office and Risk Committee.
+entity MaterialBreachIncident {
+    system: AISystem
+    scenario_id: String
+    classification: BreachClass
     severity: IncidentSeverity
     occurred_at: Timestamp
     reported_to_office_at: Timestamp?
@@ -370,13 +394,13 @@ entity MaterialIncident {
     summary: String
     citation: PolicyCitation
 
-    -- Derived: officed (i.e. reported to the Governance Office) yet.
+    -- Derived: reported to the Governance Office yet.
     reported_to_office: reported_to_office_at != null
 
     -- Derived: committee reporting is required when the system's
-    -- assigned tier is Medium or High and the incident is at least
+    -- assigned tier is Medium or High and the breach is at least
     -- material. The reporting clock for the committee runs until
-    -- the next scheduled committee meeting (§10.2).
+    -- the next scheduled committee meeting (§10.3).
     requires_committee_report:
         severity in {material, severe}
         and DeploymentRegisterEntries.any(e =>
@@ -553,52 +577,34 @@ rule WithdrawSubmission {
         submission.status = withdrawn
 }
 
--- AMEND v2 (A3): §5.4. An agentic system must assert the trace-log
--- control regardless of tier. Without it, no claim of HITL can be
--- substantiated after the fact, so missing it is a blocking finding.
-rule FlagAgenticMissingTraceLog {
+-- AMEND v2 (B3): §5.5. A risk-advisory system claiming
+-- ad_hoc_scenario_review must back the claim with a per-scenario
+-- review gate on the HITL arrangement. A single end-of-session
+-- accept/reject does not satisfy this control.
+rule FlagPassiveScenarioReview {
     when: ReviewerInspects(submission, by)
     requires:
-        submission.system.is_agentic
-        and not (agent_action_trace_log in submission.asserted_controls)
-    ensures:
-        ReviewerFinding.created(
-            submission: submission,
-            category: agentic_trace_gap,
-            severity: blocking,
-            citation: { document_ref: "LIWP-POL-AI-001", section: "§5.4" },
-            summary: "Agentic system does not assert agent_action_trace_log; per-action HITL claims cannot be substantiated without it.",
-            raised_at: now
-        )
-}
-
--- AMEND v2 (A2): §8. An agentic HITL claim must model substantiveness
--- per action class, not just at the final-output boundary.
-rule FlagAgenticPassiveHITL {
-    when: ReviewerInspects(submission, by)
-    requires:
-        submission.system.is_agentic
-        and defined_hitl in submission.asserted_controls
+        submission.system.is_risk_advisory
+        and ad_hoc_scenario_review in submission.asserted_controls
         and (
             not exists submission.hitl
-            or not submission.hitl.is_per_action_substantive
+            or not submission.hitl.has_per_scenario_review
         )
     ensures:
         ReviewerFinding.created(
             submission: submission,
-            category: agentic_hitl_design,
+            category: stress_testing_design,
             severity: blocking,
-            citation: { document_ref: "LIWP-POL-AI-001", section: "§8.2" },
-            summary: "Agentic system claims HITL but per-action review is not modelled for every consequential action class.",
+            citation: { document_ref: "LIWP-POL-AI-001", section: "§5.5" },
+            summary: "Ad-hoc scenario review claimed but no per-scenario review gate is in place.",
             raised_at: now
         )
 }
 
--- AMEND v2 (A4): §6 model substitution obligation is enforced by
--- the RegisteredDeploymentsHaveModelLedgerEntry invariant below.
--- A standalone rule that produces a ReviewerFinding requires per-
--- submission predicates only; the invariant carries the global
--- obligation and is what the AI copilot surfaces.
+-- AMEND v2 (B4): the scenario methodology obligation is enforced
+-- by the ScenarioRunsHaveMethodologyEntries invariant below. A
+-- standalone rule on submissions cannot express it because the
+-- gap appears at the system level, not the submission level.
 
 ------------------------------------------------------------
 -- Invariants
@@ -717,54 +723,50 @@ invariant ApprovedSubmissionsHaveNoBlockingFindings {
         s.status = approved implies not s.has_open_blocking_findings
 }
 
--- AMEND v2 (A3): §5.4. Every agentic system asserts the trace-log
--- control. Without it the firm cannot substantiate per-action HITL
--- or reconstruct the agent's chain of consequential actions after
--- the fact (FINOS AIR-OP-018, AIR-RC-022).
-invariant AgenticSystemsRequireTraceLog {
+-- AMEND v2 (B2): §5.5. Every risk-advisory system must operate
+-- against a current standing scenario set covering tail events,
+-- correlation breakdown and liquidity stress. "Current" means
+-- reviewed within the last twelve months.
+invariant RiskAdvisorySystemsHaveStandingScenarios {
     for s in AIDeploymentSubmissions:
-        s.system.is_agentic implies (
-            agent_action_trace_log in s.asserted_controls
-        )
+        s.system.is_risk_advisory implies
+            StandingScenarioSets.any(set =>
+                set.system = s.system
+                and set.is_current
+                and set.has_required_coverage
+            )
 }
 
--- AMEND v2 (A2): §8.2. An agentic HITL claim requires per-action
--- substantiveness — not just final-output review.
-invariant AgenticHITLRequiresPerActionReview {
+-- AMEND v2 (B3): §5.5. Risk-advisory systems must assert
+-- ad_hoc_scenario_review and back it with a per-scenario review
+-- gate on the HITL arrangement.
+invariant RiskAdvisorySystemsRequireAdHocScenarioReview {
     for s in AIDeploymentSubmissions:
-        (s.system.is_agentic and defined_hitl in s.asserted_controls) implies (
-            exists s.hitl and s.hitl.is_per_action_substantive
+        s.system.is_risk_advisory implies (
+            ad_hoc_scenario_review in s.asserted_controls
+            and exists s.hitl
+            and s.hitl.has_per_scenario_review
         )
 }
 
--- AMEND v2 (A4): §6.4. Every registered deployment must have at
--- least one ModelVersionLedgerEntry describing the model under
--- which it has operated.
-invariant RegisteredDeploymentsHaveModelLedgerEntry {
-    for entry in DeploymentRegisterEntries:
-        ModelVersionLedgerEntries.any(le =>
-            le.system = entry.submission.system
-        )
+-- AMEND v2 (B4): §6.5. Every scenario run by a risk-advisory
+-- system must be recorded in the Scenario Methodology Ledger.
+invariant ScenarioRunsHaveMethodologyEntries {
+    for r in ScenarioTasks:
+        r.system.is_risk_advisory implies
+            ScenarioMethodologyLedgerEntries.any(e =>
+                e.scenario_id = r.id
+            )
 }
 
--- AMEND v2 (A5): §10.1. A material or severe incident must be
--- reported to the AI Governance Office within the reporting clock.
-invariant MaterialIncidentsReportedPromptly {
-    for i in MaterialIncidents:
-        i.severity in {material, severe} implies (
-            i.reported_to_office
-            and i.reported_to_office_at - i.occurred_at
+-- AMEND v2 (B5): §10.3. A material or severe breach must be
+-- reported to the Risk Committee within the reporting clock.
+invariant MaterialBreachesReportedPromptly {
+    for b in MaterialBreachIncidents:
+        b.severity in {material, severe} implies (
+            b.reported_to_committee_at != null
+            and b.reported_to_committee_at - b.occurred_at
                 <= config.office_report_clock_seconds
-        )
-}
-
--- AMEND v2 (A5): §10.2. A material or severe incident on a Medium
--- or High tier system must be reported to the AI Governance
--- Committee.
-invariant MaterialIncidentsOnTieredSystemsReportedToCommittee {
-    for i in MaterialIncidents:
-        i.requires_committee_report implies (
-            i.reported_to_committee_at != null
         )
 }
 
@@ -800,9 +802,9 @@ surface CopilotReview {
         submission.system.is_customer_facing
         submission.system.makes_consequential_recommendations
         submission.system.regulatory_domain
-        -- AMEND v2 (A1): agentic factor is part of the reviewer's
-        -- briefing pack.
-        submission.system.is_agentic
+        -- AMEND v2 (B1): risk-advisory factor is part of the
+        -- reviewer's briefing pack.
+        submission.system.is_risk_advisory
         submission.assigned_tier
         submission.asserted_controls
         submission.hitl
@@ -895,12 +897,12 @@ open question "OQ-Monitoring-Deferral: §10 says monitoring is 'a baseline requi
 
 open question "OQ-Equivalent-Assurance: §5.3 permits 'an alternative continuous evaluation arrangement that the AI Governance Office determines provides equivalent assurance' as a substitute for quarterly red-team rotation. v1 requires continuous_red_team_rotation outright. What evidence and decision process establishes 'equivalent assurance'?"
 
--- AMEND v2 (A4): OQ-Vendor-Change is partly closed. The ledger
--- entity now records every substitution; a future revision should
--- encode the threshold above which substantive_change triggers
--- re-review (FINRA 2025 calls out vendor or foundation-model
--- substitution explicitly).
-open question "OQ-Vendor-Change-Threshold: ModelVersionLedger now records substitutions, but the threshold at which substantive_change forces a fresh AIDeploymentSubmission review is not defined. Candidate: any substantive_change on a Medium or High tier system. Needs the AI Governance Office to set the rule."
+-- AMEND v2 (B4): OQ-Vendor-Change is partly closed. The scenario
+-- methodology ledger records the model_version that selected each
+-- scenario; a future revision should encode the threshold above
+-- which a model substitution forces fresh review (FINRA 2025 calls
+-- out vendor or foundation-model substitution explicitly).
+open question "OQ-Vendor-Change-Threshold: ScenarioMethodologyLedger now records the model version per scenario, but the threshold at which a model or vendor substitution forces a fresh AIDeploymentSubmission review is not defined. Candidate: any substitution on a Medium or High tier risk-advisory system. Needs the AI Governance Office to set the rule."
 
 open question "OQ-Hitl-Minimum-Time: config.minimum_review_seconds is a placeholder. §8 references 'time available for review' as a factor in HITL substantiveness but does not set a threshold. What time floor (if any) does the AI Governance Office set for advice-domain systems?"
 
@@ -912,12 +914,13 @@ open question "OQ-Domain-Mapping-Granularity: §5.2 requires 'domain-specific ob
 
 open question "OQ-Exception-Path: §9 permits the AI Governance Committee to grant exceptions to §5 requirements on the basis of documented business case, mitigating controls and re-review date. The spec does not model the Exception entity, the carry-forward of mitigating controls or the re-review clock. Adding this would require an Exception entity scoped to a submission, with a status transition graph for re-review."
 
--- AMEND v2 (A5): OQ-Material-Incident-Reporting is closed by the
--- MaterialIncident entity, the IncidentClass / IncidentSeverity
--- enums, and the MaterialIncidentsReportedPromptly /
--- MaterialIncidentsOnTieredSystemsReportedToCommittee invariants.
+-- AMEND v2 (B5): OQ-Material-Incident-Reporting is closed by the
+-- MaterialBreachIncident entity, the BreachClass / IncidentSeverity
+-- enums, and the MaterialBreachesReportedPromptly invariant.
 
--- AMEND v2 (A1): a new open question raised by the agentic-AI
--- amendments.
-open question "OQ-Agentic-Tier-Floor: the v2 amendments require trace logs and per-action HITL for any is_agentic system, but do not raise the tier floor for agentic systems. FINRA's 2025 report suggests agentic systems acting on customer-facing surfaces should be treated as High by default. Pending guidance from the AI Governance Office."
+-- AMEND v2 (B3): a new open question raised by the stress-testing
+-- amendments. §5.5 requires ad-hoc scenarios to be reviewed by an
+-- independent qualified party, but does not yet specify what counts
+-- as "qualified" for LLM-selected scenarios.
+open question "OQ-Scenario-Selection-Independence: §5.5 requires ad-hoc scenarios to be reviewed by an independent qualified party before informing consequential action. The spec defines independence as 'excluding the analyst who initiated the session' but does not yet specify what counts as a qualified independent reviewer for LLM-selected scenarios. Candidate: a member of the desk's risk methodology function. Needs the AI Governance Office to set the rule."
 
