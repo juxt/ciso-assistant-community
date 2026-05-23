@@ -1050,6 +1050,12 @@ def dispatch_tool_call(
     Returns a result dict compatible with format_query_result(),
     or a proposal dict for propose_create / propose_attach.
     """
+    # Warning level so it shows up in `docker compose logs` during iteration —
+    # the upstream tool_dispatch_complete log is INFO and is filtered out by
+    # whatever logging config Docker's log driver picks up. One line per
+    # dispatched call, naming the tool, is the diagnostic surface we want.
+    logger.warning("chat_tool_dispatch", tool=tool_name, args=arguments)
+
     # search_library has its own parameter space — skip query_objects sanitization
     if tool_name == "search_library":
         return _dispatch_search_library(arguments, user_message=user_message)
