@@ -94,6 +94,10 @@ Where an AI System is used to inform risk-management decisions — running scena
 
 Ad-hoc scenarios constructed or selected outside the standing set are supplementary to it, not a substitute for it. Each ad-hoc scenario shall be reviewed by an independent qualified party before its results inform any consequential action. A scenario methodology trail shall be maintained for every scenario the System runs, recording what selected it, what data and calibration informed it, and the model version under which it was reasoned about.
 
+### 5.6 Concentration limit ceiling for risk-advisory systems
+
+A risk-advisory AI System shall operate against a book whose desk-level concentration limits, by counterparty, do not exceed twenty-five per cent of the desk's gross notional. The desk may set tighter limits; it may not set looser ones without prior approval from the AI Governance Committee on the basis of a documented business case. The limit applies to every desk the System serves and shall be recorded in the desk's risk-appetite statement.
+
 ## 6. AI deployment lifecycle
 
 All in-scope AI Systems shall follow the deployment lifecycle set out below. The lifecycle applies to net-new deployments, to materially changed existing deployments, and to vendor or model substitutions affecting an in-flight deployment.
