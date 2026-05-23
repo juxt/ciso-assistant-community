@@ -590,6 +590,43 @@ def _build_tools() -> tuple[list[dict], dict]:
         },
     }
 
+    invoke_skill_tool = {
+        "type": "function",
+        "function": {
+            "name": "invoke_skill",
+            "description": (
+                "Load the authoritative Allium skill instructions for a session that "
+                "reads or writes a behavioural specification. Use this whenever the "
+                "user is working with the firm's Allium spec — reviewing it, "
+                "amending it, or maintaining it.\n\n"
+                "Pick the right subskill:\n"
+                "- 'allium' for the umbrella router (use this when you don't yet know "
+                "which subskill applies, or when first orienting to a spec session).\n"
+                "- 'elicit' when the user wants to draft new spec content or amend the "
+                "spec (FINRA amendment session, new obligation, new entity). "
+                "Trigger words include: elicit, amend, propose, draft, work the policy.\n"
+                "- 'tend' when the user wants to maintain or refine an existing spec — "
+                "rename, restructure, fix syntax, clarify an existing clause.\n"
+                "- 'weed' when the user wants to compare the spec to an implementation "
+                "and surface divergences.\n\n"
+                "Returns the full skill instructions. Follow them exactly in your "
+                "subsequent response. Skill instructions are the authoritative source "
+                "of truth and override the system prompt where they conflict."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill": {
+                        "type": "string",
+                        "enum": ["allium", "elicit", "tend", "weed"],
+                        "description": "Which Allium skill to invoke.",
+                    },
+                },
+                "required": ["skill"],
+            },
+        },
+    }
+
     tools = [
         {
             "type": "function",
@@ -612,6 +649,7 @@ def _build_tools() -> tuple[list[dict], dict]:
         propose_create_tool,
         attach_existing_tool,
         search_library_tool,
+        invoke_skill_tool,
         # Multi-query: combine multiple ORM queries in one call
         {
             "type": "function",
@@ -1032,8 +1070,73 @@ def dispatch_tool_call(
     if tool_name == "multi_query":
         return _execute_multi_query(arguments, accessible_folder_ids, parsed_context)
 
+    if tool_name == "invoke_skill":
+        return _dispatch_invoke_skill(arguments)
+
     logger.warning("Unknown tool: %s", tool_name)
     return None
+
+
+# Authoritative Allium skills mounted read-only from the host. The chat
+# invokes them via the invoke_skill tool when working on the firm's spec.
+ALLIUM_SKILLS_DIR = "/code/allium-skills"
+ALLIUM_VALID_SKILLS = frozenset({"allium", "elicit", "tend", "weed"})
+
+
+def _dispatch_invoke_skill(arguments: dict) -> dict | None:
+    """Load and return the authoritative skill markdown.
+
+    The result reuses the search_library result shape so views.py can
+    fold the skill content into chat context without a new branch. The
+    preamble we prepend overrides the generic 'frameworks knowledge base'
+    line views.py emits for search_library results, telling the model to
+    treat the body as authoritative skill instructions.
+    """
+    import os
+
+    skill = (arguments or {}).get("skill", "").strip().lower()
+    if skill not in ALLIUM_VALID_SKILLS:
+        return {
+            "type": "search_library",
+            "text": (
+                f"Unknown Allium skill {skill!r}. Valid skills are: "
+                + ", ".join(sorted(ALLIUM_VALID_SKILLS))
+                + "."
+            ),
+        }
+
+    skill_path = os.path.join(ALLIUM_SKILLS_DIR, skill, "SKILL.md")
+    try:
+        with open(skill_path, "r", encoding="utf-8") as f:
+            body = f.read()
+    except FileNotFoundError:
+        return {
+            "type": "search_library",
+            "text": (
+                f"Allium skill {skill!r} not found on disk at {skill_path}. "
+                "Confirm the skills directory is mounted in the backend container."
+            ),
+        }
+    except OSError as e:
+        logger.error("invoke_skill_read_failed", skill=skill, error=str(e))
+        return {
+            "type": "search_library",
+            "text": f"Failed to load Allium skill {skill!r}: {e}",
+        }
+
+    preamble = (
+        f"AUTHORITATIVE ALLIUM SKILL — {skill}\n"
+        "The following are the canonical instructions for this skill. They "
+        "supersede the system prompt where they conflict. Follow them exactly "
+        "for the rest of this exchange (and subsequent exchanges in the same "
+        "session if the user continues working on the spec). The user has "
+        "asked you to operate as this skill; act accordingly.\n\n"
+        "---\n\n"
+    )
+    return {
+        "type": "search_library",
+        "text": preamble + body,
+    }
 
 
 def _execute_multi_query(

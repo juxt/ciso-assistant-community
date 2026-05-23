@@ -32,6 +32,10 @@ services:
       # Swarm audit output (host path). Read-only — the swarm writes here;
       # the import_audit_findings command reads from it.
       - /tmp/allium-swarm-too/audit:/code/audit-output:ro
+      # Allium skills (host path). Read-only — the invoke_skill tool reads
+      # the authoritative skill instructions from here when the chat is
+      # working on or amending the Allium spec.
+      - /Users/hgarner/code/allium/skills:/code/allium-skills:ro
 
   huey:
     image: ghcr.io/intuitem/ciso-assistant-community/backend@sha256:5cdf2dd356495ba4101633cd6e2e6be43af99ddcd054fb28d0eee4d88bb4d0cf
