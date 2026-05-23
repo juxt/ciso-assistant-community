@@ -172,33 +172,43 @@ class Command(BaseCommand):
 
         from chat.rag import COLLECTION_NAME, get_qdrant_client
 
-        expected = {
-            "policy-AI Governance Policy-rev1.md",
-            "policy-FINOS AI Readiness Governance Framework (adopted)-rev1.md",
+        # Match on filename prefix so the check survives revision bumps
+        # (setup_demo creates rev2 when policy content changes).
+        expected_prefixes = {
+            "policy-AI Governance Policy-rev",
+            "policy-FINOS AI Readiness Governance Framework (adopted)-rev",
         }
         client = get_qdrant_client()
-        missing = []
-        for filename in expected:
-            count = client.count(
+        # Scroll all document chunks once, then check prefixes locally.
+        seen_prefixes = set()
+        next_offset = None
+        while True:
+            points, next_offset = client.scroll(
                 collection_name=COLLECTION_NAME,
-                count_filter=Filter(
+                scroll_filter=Filter(
                     must=[
-                        FieldCondition(
-                            key="filename", match=MatchValue(value=filename)
-                        ),
                         FieldCondition(
                             key="source_type",
                             match=MatchValue(value="document"),
                         ),
                     ]
                 ),
-            ).count
-            if count == 0:
-                missing.append(filename)
+                limit=200,
+                offset=next_offset,
+                with_payload=["filename"],
+            )
+            for p in points:
+                fn = (p.payload or {}).get("filename", "")
+                for prefix in expected_prefixes:
+                    if fn.startswith(prefix):
+                        seen_prefixes.add(prefix)
+            if next_offset is None:
+                break
+        missing = expected_prefixes - seen_prefixes
         if missing:
             raise AssertionError(
                 "demo policy chunks missing from Qdrant: "
-                + ", ".join(missing)
+                + ", ".join(sorted(missing))
                 + ". Run `manage.py setup_demo` and wait for indexing."
             )
 
