@@ -34,6 +34,11 @@
 --       and the model version that reasoned about it (§6.5).
 --   B5. MaterialBreachIncident entity and reporting clock added
 --       (§10.3).
+--   B6. Concentration-limit ceiling added (§5.6, new): for risk-
+--       advisory systems serving derivatives books, a counterparty
+--       concentration limit higher than 25% of the desk's gross
+--       notional is a policy violation. The desk may set its own
+--       limit below this ceiling.
 
 ------------------------------------------------------------
 -- Value Types
@@ -181,6 +186,13 @@ config {
     -- A standing set must be reviewed by an independent party at
     -- least this often (12 months).
     standing_set_review_window_seconds: Integer = 31536000
+
+    -- AMEND v2 (B6): §5.6 policy ceiling on counterparty
+    -- concentration limits for risk-advisory systems serving
+    -- derivatives books. Any desk-set limit above this is a
+    -- policy violation that requires AI Governance Committee
+    -- escalation.
+    counterparty_concentration_ceiling: Decimal = 0.25
 }
 
 ------------------------------------------------------------
@@ -404,6 +416,26 @@ entity MaterialBreachIncident {
         )
 }
 
+-- AMEND v2 (B6): §5.6. Concentration limit ceiling for risk-
+-- advisory systems serving derivatives books. The desk's
+-- concentration limits are a structural property of how risk is
+-- managed; the firm sets a policy ceiling on the most permissive
+-- limit a desk may adopt without escalation.
+enum ConcentrationDimension {
+    counterparty
+    | instrument_family
+    | underlier
+}
+
+entity ConcentrationLimit {
+    system: AISystem
+    dimension: ConcentrationDimension
+    threshold_share: Decimal          -- e.g. 0.25 means 25% of gross notional
+    applicable_desks: Set<String>
+    set_by: String                    -- "desk" | "markets_risk" | "ai_governance"
+    set_at: Timestamp
+}
+
 ------------------------------------------------------------
 -- Invariants
 ------------------------------------------------------------
@@ -544,6 +576,16 @@ invariant MaterialBreachesReportedPromptly {
             and b.reported_to_committee_at - b.occurred_at
                 <= config.office_report_clock_seconds
         )
+}
+
+-- AMEND v2 (B6): §5.6. Counterparty concentration limits set by a
+-- risk-advisory system's desk must not exceed the policy ceiling.
+-- Desks may set tighter limits; they may not set looser ones
+-- without AI Governance Committee escalation.
+invariant ConcentrationLimitsWithinPolicyCeiling {
+    for l in ConcentrationLimits:
+        l.dimension = counterparty implies
+            l.threshold_share <= config.counterparty_concentration_ceiling
 }
 
 ------------------------------------------------------------
