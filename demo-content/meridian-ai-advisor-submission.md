@@ -28,7 +28,7 @@ The analyst reviews the recommendation and clicks Accept or Reject. The determin
 
 **Proposed tier: Medium.**
 
-Rationale: Lighthouse is not customer-facing. It does not make a recommendation that reaches a client, and it does not act autonomously on portfolios. Its outputs are advisory only — the recommended actions sit on the analyst's screen until the analyst clicks Accept, and even an accepted recommendation does not bypass Meridian's existing controls. We therefore consider it a productivity tool for a small, qualified internal population rather than a customer-facing decision system.
+Rationale: Lighthouse is not customer-facing. It does not make a recommendation that reaches a client, and it does not act autonomously on portfolios. Its outputs are advisory only — the recommended scenarios and follow-ups sit on the analyst's screen until the analyst clicks Accept, and even an accepted recommendation does not bypass Meridian's existing controls. We therefore consider it a productivity tool for a small, qualified internal population rather than a customer-facing decision system. The advisor's `run_scenario` calls reuse the desk's existing scenario engine; the engine's outputs are interpreted and actioned by the analyst as they would be in any unassisted session, so we treat the AI layer as advisory in posture.
 
 FINOS risks engaged: **AIR-OP-014** (Inadequate System Alignment), **AIR-OP-017** (Lack of Explainability). We have considered **AIR-OP-018** (Model Overreach) and judge it not material at this tier given the closed tool registry (four tools, none of which act outside Meridian's public surface).
 
