@@ -184,7 +184,7 @@ done
 # --- Post-setup verification ---
 
 step "verifying patches and integrations"
-if ! docker compose exec -T backend poetry run python manage.py verify_demo; then
+if ! docker compose exec -T -e MOCK_LLM="${MOCK_LLM:-0}" backend poetry run python manage.py verify_demo; then
   fail "verify_demo failed. The demo is NOT in a known-good state. Inspect the output above."
 fi
 

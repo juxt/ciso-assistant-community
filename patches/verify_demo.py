@@ -61,8 +61,14 @@ class Command(BaseCommand):
         check("fallback surfaces firm policy, not just library", self._check_fallback_reaches_firm_policy)
         check("IndexedDocument.post_delete cleanup handler is registered", self._check_cleanup_signal)
         check("both demo policies are indexed in Qdrant", self._check_demo_policies_indexed)
-        check("chat settings point at LiteLLM with claude-sonnet", self._check_chat_settings)
-        check("LiteLLM round-trip succeeds with temperature stripped", self._check_litellm_roundtrip)
+        import os
+        use_mock = os.environ.get("MOCK_LLM", "").lower() in ("1", "true", "yes")
+        if use_mock:
+            check("chat settings point at mock-llm with claude-sonnet", self._check_chat_settings_mock)
+            check("mock-llm reachable and serving", self._check_mock_llm_reachable)
+        else:
+            check("chat settings point at LiteLLM with claude-sonnet", self._check_chat_settings)
+            check("LiteLLM round-trip succeeds with temperature stripped", self._check_litellm_roundtrip)
 
         total = len(passed) + len(failed) + len(warned)
         self.stdout.write("")
@@ -244,6 +250,54 @@ class Command(BaseCommand):
         if model != "claude-sonnet":
             raise AssertionError(
                 f"openai_model is {model!r}; expected 'claude-sonnet'"
+            )
+
+    def _check_chat_settings_mock(self):
+        from chat.providers import get_chat_settings
+
+        settings = get_chat_settings()
+        provider = settings.get("llm_provider")
+        if provider != "openai_compatible":
+            raise AssertionError(
+                f"llm_provider is {provider!r}; expected 'openai_compatible'."
+            )
+        api_base = settings.get("openai_api_base", "")
+        if "mock-llm" not in api_base or "4001" not in api_base:
+            raise AssertionError(
+                f"openai_api_base is {api_base!r}; expected the mock-llm endpoint "
+                "(http://mock-llm:4001/v1). Re-run setup_demo with MOCK_LLM=1."
+            )
+        model = settings.get("openai_model")
+        if model != "claude-sonnet":
+            raise AssertionError(
+                f"openai_model is {model!r}; expected 'claude-sonnet'"
+            )
+
+    def _check_mock_llm_reachable(self):
+        import httpx
+
+        try:
+            resp = httpx.get("http://mock-llm:4001/healthz", timeout=5)
+        except httpx.ConnectError as e:
+            raise AssertionError(
+                f"mock-llm not reachable at http://mock-llm:4001 — is the container up? "
+                f"(cd mock-llm && docker compose up -d). Underlying error: {e}"
+            ) from e
+        if resp.status_code != 200:
+            raise AssertionError(
+                f"mock-llm /healthz returned {resp.status_code}: {resp.text[:200]}"
+            )
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise AssertionError(
+                f"mock-llm /healthz returned non-JSON: {resp.text[:200]}"
+            ) from e
+        if data.get("status") != "ok":
+            raise AssertionError(f"mock-llm /healthz status not ok: {data!r}")
+        if (data.get("beats") or 0) < 1:
+            raise AssertionError(
+                "mock-llm reports zero beats loaded — responses.yaml empty or unparseable?"
             )
 
     def _check_litellm_roundtrip(self):
