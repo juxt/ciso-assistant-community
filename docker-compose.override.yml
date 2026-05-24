@@ -10,6 +10,10 @@ services:
       # firm-policy chunks always included, we need a much larger budget.
       # Claude Opus 4.7 has a 200k context window so this is comfortably safe.
       - CHAT_RAG_CONTEXT_TOKENS=20000
+      # Total prompt budget watermark. Upstream default is 8000 (small local
+      # LLMs); Claude Sonnet 4.6 / Opus 4.7 both have 200k context. Set to
+      # 64000 to leave comfortable headroom for retrieval + tool use + reply.
+      - CHAT_MODEL_CONTEXT_TOKENS=64000
       # Composed system prompt (TOOL_SYSTEM_PROMPT + Allium primer) plus
       # spec-rich responses push exchanges past the upstream 100s gunicorn
       # timeout. Bump to 240s; startup.sh reads GUNICORN_TIMEOUT directly.
