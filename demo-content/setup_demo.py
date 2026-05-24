@@ -152,11 +152,21 @@ class Command(BaseCommand):
         chat_mode gates the auto-index signal in patches/signals.py — without
         it, published DocumentRevisions never reach Qdrant via the normal path.
         """
+        import os
+
         from global_settings.models import GlobalSettings
+
+        # MOCK_LLM=1 points the chat at the bottled-response service
+        # (../mock-llm) instead of LiteLLM. The mock speaks the same
+        # OpenAI wire format the chat backend already expects.
+        use_mock = os.environ.get("MOCK_LLM", "").lower() in ("1", "true", "yes")
+        api_base = (
+            "http://mock-llm:4001/v1" if use_mock else "http://litellm:4000/v1"
+        )
 
         target = {
             "llm_provider": "openai_compatible",
-            "openai_api_base": "http://litellm:4000/v1",
+            "openai_api_base": api_base,
             "openai_model": "claude-sonnet",
             "openai_api_key": "",
             "embedding_backend": "sentence-transformers",

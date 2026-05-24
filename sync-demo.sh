@@ -134,8 +134,15 @@ fi
 
 # --- Demo content ---
 
+if [[ "${MOCK_LLM:-0}" == "1" ]]; then
+  step "MOCK_LLM=1 set — bringing up bottled-response service"
+  MOCK_DIR="$(cd "$SCRIPT_DIR/../mock-llm" && pwd)"
+  ( cd "$MOCK_DIR" && docker compose up -d --build 2>&1 | tail -5 )
+  echo "    mock-llm up; chat will point at http://mock-llm:4001/v1"
+fi
+
 step "bootstrapping demo folder and policies"
-docker compose exec -T backend poetry run python manage.py setup_demo 2>&1 | tail -12
+docker compose exec -T -e MOCK_LLM="${MOCK_LLM:-0}" backend poetry run python manage.py setup_demo 2>&1 | tail -12
 
 step "waiting for policy indexing (Huey is async; ~40s on first ingest)"
 # setup_demo queues each published policy revision for indexing via Huey.
