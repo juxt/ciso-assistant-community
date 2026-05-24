@@ -40,6 +40,7 @@ POLICIES = [
         # back indexing; useful for the Allium spec which the demo toggles
         # in and out via enable_allium/disable_allium.
         "initial_status": "published",
+        "csf_function": "govern",
     },
     {
         "name": "AI Governance Policy",
@@ -49,6 +50,7 @@ POLICIES = [
             "Defines roles, tier criteria, controls per tier, and domain obligations."
         ),
         "initial_status": "published",
+        "csf_function": "govern",
     },
     {
         "name": "AI Governance Policy — Executable Specification",
@@ -59,6 +61,7 @@ POLICIES = [
         ),
         # The demo starts in foil mode. enable_allium promotes this to Published.
         "initial_status": "draft",
+        "csf_function": "govern",
     },
 ]
 
@@ -170,13 +173,27 @@ class Command(BaseCommand):
             name=GlobalSettings.Names.FEATURE_FLAGS, defaults={"value": {}}
         )
         flags = ff.value or {}
-        if not flags.get("chat_mode"):
-            flags["chat_mode"] = True
+        # Flags the demo relies on. chat_mode gates the auto-index signal
+        # for DocumentRevisions (patches/signals.py). policy_documents
+        # gates the in-page document viewer on the Policy detail page —
+        # without it Sarah can't open a policy and read its content in the
+        # UI. Set both explicitly so we don't depend on serializer defaults.
+        wanted = {"chat_mode": True, "policy_documents": True}
+        changed_flags = []
+        for k, v in wanted.items():
+            if flags.get(k) != v:
+                flags[k] = v
+                changed_flags.append(k)
+        if changed_flags:
             ff.value = flags
             ff.save(update_fields=["value"])
-            self.stdout.write(self.style.SUCCESS("enabled chat_mode feature flag"))
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"enabled feature flag(s): {', '.join(changed_flags)}"
+                )
+            )
         else:
-            self.stdout.write("chat_mode feature flag already enabled")
+            self.stdout.write("feature flags already configured")
 
     def _setup_policy(self, folder, spec):
         from core.models import Policy
@@ -194,8 +211,17 @@ class Command(BaseCommand):
         policy, p_created = Policy.objects.get_or_create(
             folder=folder,
             name=name,
-            defaults={"description": spec.get("description", "")},
+            defaults={
+                "description": spec.get("description", ""),
+                "csf_function": spec.get("csf_function") or None,
+            },
         )
+        # Update csf_function on existing policies so the analytics
+        # dashboard doesn't show "(undefined)" wedges.
+        wanted_csf = spec.get("csf_function") or None
+        if not p_created and policy.csf_function != wanted_csf:
+            policy.csf_function = wanted_csf
+            policy.save(update_fields=["csf_function"])
         prefix = self.style.SUCCESS("created") if p_created else "exists "
         self.stdout.write(f"{prefix}  policy: {name}")
 
