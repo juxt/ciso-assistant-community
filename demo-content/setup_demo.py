@@ -207,7 +207,10 @@ class Command(BaseCommand):
             .first()
         )
 
-        # If a revision already exists with matching content and status, no-op.
+        # If a revision already exists with matching content and status, no-op
+        # on the DB. But the qdrant index may be empty (fresh volume, prior
+        # crash mid-indexing); re-trigger ingestion if the IndexedDocument
+        # is missing.
         if (
             latest_any
             and latest_any.content.strip() == content.strip()
@@ -217,6 +220,8 @@ class Command(BaseCommand):
                 f"           revision v{latest_any.version_number} "
                 f"({target_status_str}) unchanged"
             )
+            if target_status == DocumentRevision.Status.PUBLISHED:
+                self._reindex_if_missing(latest_any, DocumentRevision)
             return
 
         next_version = (latest_any.version_number + 1) if latest_any else 1
@@ -237,6 +242,34 @@ class Command(BaseCommand):
             self.style.SUCCESS(
                 f"           {verb} revision v{next_version} "
                 f"({len(content):,} chars) — {tail}"
+            )
+        )
+
+    def _reindex_if_missing(self, revision, revision_model):
+        """If a published revision has no corresponding IndexedDocument, re-fire
+        the chat ingestion path. Guards against the case where setup_demo's
+        content-equality idempotency skips a revision that was never (or no
+        longer is) actually indexed into Qdrant."""
+        from django.contrib.contenttypes.models import ContentType
+
+        try:
+            from chat.models import IndexedDocument
+            from chat.signals import _ingest_revision_content
+        except Exception as e:
+            self.stdout.write(f"           skip reindex check: {e}")
+            return
+
+        ct = ContentType.objects.get_for_model(revision_model)
+        already = IndexedDocument.objects.filter(
+            source_content_type=ct, source_object_id=revision.id
+        ).exists()
+        if already:
+            return
+        _ingest_revision_content(revision.id, revision_model)
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"           re-queued indexing for v{revision.version_number} "
+                "(no IndexedDocument found)"
             )
         )
 
@@ -295,6 +328,8 @@ class Command(BaseCommand):
                 f"           revision v{latest_any.version_number} "
                 f"({target_status_str}) unchanged"
             )
+            if target_status == DocumentRevision.Status.PUBLISHED:
+                self._reindex_if_missing(latest_any, DocumentRevision)
             return
 
         next_version = (latest_any.version_number + 1) if latest_any else 1
