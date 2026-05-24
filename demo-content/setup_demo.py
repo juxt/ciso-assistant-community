@@ -136,8 +136,12 @@ class Command(BaseCommand):
     def _configure_chat_settings(self):
         """
         Wire CISO Assistant's GlobalSettings to point the chat at our LiteLLM
-        proxy. Used to be a manual step in the UI; bootstrapping it here means
-        a fresh `./sync-demo.sh` lands a fully-configured demo.
+        proxy, and enable the chat_mode feature flag. Used to be manual steps
+        in the UI; bootstrapping them here means a fresh `./sync-demo.sh`
+        lands a fully-configured demo.
+
+        chat_mode gates the auto-index signal in patches/signals.py — without
+        it, published DocumentRevisions never reach Qdrant via the normal path.
         """
         from global_settings.models import GlobalSettings
 
@@ -161,6 +165,18 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS("updated chat settings (LLM provider, model, base URL)"))
         else:
             self.stdout.write("chat settings already configured")
+
+        ff, _ = GlobalSettings.objects.get_or_create(
+            name=GlobalSettings.Names.FEATURE_FLAGS, defaults={"value": {}}
+        )
+        flags = ff.value or {}
+        if not flags.get("chat_mode"):
+            flags["chat_mode"] = True
+            ff.value = flags
+            ff.save(update_fields=["value"])
+            self.stdout.write(self.style.SUCCESS("enabled chat_mode feature flag"))
+        else:
+            self.stdout.write("chat_mode feature flag already enabled")
 
     def _setup_policy(self, folder, spec):
         from core.models import Policy
