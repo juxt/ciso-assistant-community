@@ -63,15 +63,12 @@ POLICIES = [
         "initial_status": "draft",
         "csf_function": "govern",
     },
-]
-
-
-# Records (deployment submissions, post-incident reports, etc.) carried into
-# CISO Assistant as RECORD-type ManagedDocuments rather than Policies. They
-# are not the firm's policies — they are the artefacts the firm reviews
-# against the policies. Indexed the same way (the signal acts on any
-# PUBLISHED DocumentRevision) so the chat can retrieve them.
-RECORDS = [
+    # Carried as a Policy purely for UI reasons: it inherits the Policy
+    # detail page's inline markdown viewer so Sarah can show the audience
+    # the submission live. The taxonomy is wrong (a vendor submission is
+    # not the firm's policy) and should be fixed by adding the inline
+    # viewer to the generic managed-documents detail page. Tracked in
+    # REHEARSAL-DIVERGENCES.md.
     {
         "name": "Meridian AI Scenario Advisor v1.0 — AI Deployment Submission",
         "file": "meridian-ai-advisor-submission.md",
@@ -79,11 +76,20 @@ RECORDS = [
             "Risk-Division submission lodging the Meridian AI Scenario Advisor "
             "(internal codename Lighthouse) for second-line review. Proposed "
             "tier Medium. Used as the worked example in the wealth-firm AI "
-            "governance demo."
+            "governance demo. Held as a Policy temporarily so the inline "
+            "viewer can render it."
         ),
         "initial_status": "published",
+        "csf_function": "identify",
     },
 ]
+
+
+# Records sit as RECORD-type ManagedDocuments with no Policy parent.
+# The generic managed-documents detail page does not yet render a
+# document's content inline, so anything that needs to be shown to the
+# audience lives in POLICIES above as a temporary measure.
+RECORDS = []
 
 
 class Command(BaseCommand):
